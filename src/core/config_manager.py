@@ -29,8 +29,26 @@ DEFAULT_CONFIG = {
             }
         },
         "models": {
-            "logic": {"name": "gemma2:9b", "num_ctx": 8192},
-            "persona": {"name": "llama3.1:70b", "num_ctx": 8192},
+            "logic": {"name": "gemma2:9b", "num_ctx": 8192, "temperature": 0.3},
+            "persona": {
+                "name": "llama3.1:70b",
+                "num_ctx": 8192,
+                "temperature": 0.7,
+                "prompt": (
+                    "Rewrite the following English text to sound natural for a Reddit post.\n"
+                    "\n"
+                    "Rules:\n"
+                    "- Use casual, conversational tone appropriate for Reddit\n"
+                    "- Add common Reddit expressions where natural (e.g., \"IMO\", \"FWIW\")\n"
+                    "- Keep the core meaning intact\n"
+                    "- Do not over-use slang - keep it readable\n"
+                    "- Match the tone to the subreddit context if provided\n"
+                    "- NEVER add facts, details, tool names, or motivations not present in the original\n"
+                    "- NEVER invent specific names (e.g., 'Google Translate') unless explicitly mentioned\n"
+                    "- Only rephrase existing information - do not expand or embellish\n"
+                    "- Output ONLY the rewritten text"
+                ),
+            },
             "summary": {"name": "llama3.1:8b", "num_ctx": 8192},
         },
         "generation": {
@@ -239,8 +257,8 @@ class ConfigManager:
                 logger.warning(f"Invalid request_interval_sec '{value}'. Must be int. Ignoring.")
                 return None
 
-        # llm.generation.temperature validation
-        if key == "llm.generation.temperature":
+        # temperature validation (generation, logic, persona)
+        if key in ("llm.generation.temperature", "llm.models.logic.temperature", "llm.models.persona.temperature"):
             try:
                 temp = float(value)
                 if not (0.0 <= temp <= 2.0):

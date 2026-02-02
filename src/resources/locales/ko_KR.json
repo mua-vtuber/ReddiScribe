@@ -63,6 +63,9 @@
     "interval_label": "요청 간격 (초)",
     "mock_label": "Mock 모드",
     "save_btn": "저장",
+    "persona_group": "페르소나 커스텀",
+    "persona_temp_label": "창의성 (Temperature)",
+    "persona_prompt_label": "페르소나 프롬프트",
     "advanced_group": "고급",
     "log_level_label": "로그 레벨"
   },

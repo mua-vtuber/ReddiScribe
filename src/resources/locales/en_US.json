@@ -63,6 +63,9 @@
     "interval_label": "Request Interval (sec)",
     "mock_label": "Mock Mode",
     "save_btn": "Save",
+    "persona_group": "Persona Custom",
+    "persona_temp_label": "Creativity (Temperature)",
+    "persona_prompt_label": "Persona Prompt",
     "advanced_group": "Advanced",
     "log_level_label": "Log Level"
   },

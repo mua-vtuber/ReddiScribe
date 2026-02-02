@@ -65,7 +65,7 @@ def main():
 
     # 6. Create services (inject adapters)
     reader_service = ReaderService(reddit_adapter, ollama_adapter, db)
-    writer_service = WriterService(ollama_adapter)
+    writer_service = WriterService(ollama_adapter, config)
 
     # 7. Create QApplication
     app = QApplication(sys.argv)

@@ -5,9 +5,10 @@ import logging
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QFormLayout, QGroupBox,
     QPushButton, QComboBox, QSpinBox, QCheckBox,
-    QLineEdit, QLabel,
+    QLineEdit, QLabel, QTextEdit, QDoubleSpinBox,
+    QScrollArea,
 )
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import pyqtSignal, Qt
 
 from src.core.config_manager import ConfigManager
 from src.core.i18n_manager import I18nManager
@@ -30,7 +31,14 @@ class SettingsWidget(QWidget):
         self._load_values()
 
     def _init_ui(self):
-        layout = QVBoxLayout(self)
+        outer_layout = QVBoxLayout(self)
+
+        # Scroll area for all settings
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        container = QWidget()
+        layout = QVBoxLayout(container)
 
         self._header = QLabel(self._i18n.get("settings.header"))
         self._header.setStyleSheet("font-size: 16px; font-weight: bold;")
@@ -82,6 +90,26 @@ class SettingsWidget(QWidget):
         self._llm_group.setLayout(llm_form)
         layout.addWidget(self._llm_group)
 
+        # === Persona group ===
+        self._persona_group = QGroupBox(self._i18n.get("settings.persona_group"))
+        persona_form = QFormLayout()
+
+        self._persona_temp_label = QLabel(self._i18n.get("settings.persona_temp_label"))
+        self._persona_temp_spin = QDoubleSpinBox()
+        self._persona_temp_spin.setRange(0.0, 2.0)
+        self._persona_temp_spin.setSingleStep(0.1)
+        self._persona_temp_spin.setDecimals(1)
+        persona_form.addRow(self._persona_temp_label, self._persona_temp_spin)
+
+        self._persona_prompt_label = QLabel(self._i18n.get("settings.persona_prompt_label"))
+        self._persona_prompt_input = QTextEdit()
+        self._persona_prompt_input.setMinimumHeight(120)
+        self._persona_prompt_input.setMaximumHeight(200)
+        persona_form.addRow(self._persona_prompt_label, self._persona_prompt_input)
+
+        self._persona_group.setLayout(persona_form)
+        layout.addWidget(self._persona_group)
+
         # === Reddit group ===
         self._reddit_group = QGroupBox(self._i18n.get("settings.reddit_group"))
         reddit_form = QFormLayout()
@@ -117,6 +145,9 @@ class SettingsWidget(QWidget):
 
         layout.addStretch()
 
+        scroll.setWidget(container)
+        outer_layout.addWidget(scroll)
+
     def _load_values(self):
         """Load current config values into widgets."""
         self._lang_combo.setCurrentText(self._config.get("app.locale", "ko_KR"))
@@ -126,6 +157,8 @@ class SettingsWidget(QWidget):
         self._summary_input.setText(self._config.get("llm.models.summary.name", ""))
         self._host_input.setText(self._config.get("llm.providers.ollama.host", "http://localhost:11434"))
         self._timeout_spin.setValue(self._config.get("llm.providers.ollama.timeout", 120))
+        self._persona_temp_spin.setValue(self._config.get("llm.models.persona.temperature", 0.7))
+        self._persona_prompt_input.setPlainText(self._config.get("llm.models.persona.prompt", ""))
         self._interval_spin.setValue(self._config.get("reddit.request_interval_sec", 6))
         self._mock_check.setChecked(self._config.get("reddit.mock_mode", False))
         self._log_combo.setCurrentText(self._config.get("app.log_level", "INFO"))
@@ -139,6 +172,8 @@ class SettingsWidget(QWidget):
             "app.log_level": self._log_combo.currentText(),
             "llm.models.logic.name": self._logic_input.text(),
             "llm.models.persona.name": self._persona_input.text(),
+            "llm.models.persona.temperature": self._persona_temp_spin.value(),
+            "llm.models.persona.prompt": self._persona_prompt_input.toPlainText(),
             "llm.models.summary.name": self._summary_input.text(),
             "llm.providers.ollama.host": self._host_input.text(),
             "llm.providers.ollama.timeout": self._timeout_spin.value(),
@@ -167,6 +202,9 @@ class SettingsWidget(QWidget):
         self._summary_label.setText(self._i18n.get("settings.summary_label"))
         self._host_label.setText(self._i18n.get("settings.host_label"))
         self._timeout_label.setText(self._i18n.get("settings.timeout_label"))
+        self._persona_group.setTitle(self._i18n.get("settings.persona_group"))
+        self._persona_temp_label.setText(self._i18n.get("settings.persona_temp_label"))
+        self._persona_prompt_label.setText(self._i18n.get("settings.persona_prompt_label"))
         self._reddit_group.setTitle(self._i18n.get("settings.reddit_group"))
         self._interval_label.setText(self._i18n.get("settings.interval_label"))
         self._mock_label.setText(self._i18n.get("settings.mock_label"))

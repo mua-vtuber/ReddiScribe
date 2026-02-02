@@ -4,6 +4,7 @@ import logging
 from typing import Iterator
 
 from src.adapters.llm_adapter import LLMAdapter
+from src.core.config_manager import ConfigManager
 
 logger = logging.getLogger("reddiscribe")
 
@@ -11,12 +12,16 @@ logger = logging.getLogger("reddiscribe")
 class WriterService:
     """Orchestrates the 2-stage writing pipeline.
 
-    Stage 1 (Draft): Korean -> English translation using logic model (gemma2:9b)
-    Stage 2 (Polish): English draft -> Reddit-ready English using persona model (llama3.1:70b)
+    Stage 1 (Draft): Korean -> English literal translation using logic model
+    Stage 2 (Polish): English draft -> Reddit-ready English using persona model
+
+    All model names, temperatures, and prompts are read from ConfigManager
+    so Settings UI changes take effect immediately.
     """
 
-    def __init__(self, llm: LLMAdapter):
+    def __init__(self, llm: LLMAdapter, config: ConfigManager):
         self._llm = llm
+        self._config = config
 
     def draft(self, korean_text: str, target_lang: str = "English", stream: bool = True) -> Iterator[str]:
         """Stage 1: Korean -> target language draft using logic model.
@@ -36,9 +41,9 @@ class WriterService:
 
         yield from self._llm.generate(
             prompt=prompt,
-            model="gemma2:9b",  # logic model
-            num_ctx=8192,
-            temperature=0.3,  # low temperature for faithful translation
+            model=self._config.get("llm.models.logic.name", "gemma2:9b"),
+            num_ctx=self._config.get("llm.models.logic.num_ctx", 8192),
+            temperature=self._config.get("llm.models.logic.temperature", 0.3),
             stream=stream,
         )
 
@@ -55,13 +60,14 @@ class WriterService:
         Raises:
             OllamaNotRunningError, ModelNotFoundError, LLMTimeoutError
         """
-        prompt = self._build_polish_prompt(english_draft)
+        persona_prompt = self._config.get("llm.models.persona.prompt", "")
+        full_prompt = f"{persona_prompt}\n\nOriginal English:\n{english_draft}"
 
         yield from self._llm.generate(
-            prompt=prompt,
-            model="llama3.1:70b",  # persona model
-            num_ctx=8192,
-            temperature=0.7,  # moderate creativity for natural Reddit tone
+            prompt=full_prompt,
+            model=self._config.get("llm.models.persona.name", "llama3.1:70b"),
+            num_ctx=self._config.get("llm.models.persona.num_ctx", 8192),
+            temperature=self._config.get("llm.models.persona.temperature", 0.7),
             stream=stream,
         )
 
@@ -84,24 +90,4 @@ class WriterService:
             f"- Output ONLY the {target_lang} translation\n"
             "\n"
             f"Korean text:\n{korean_text}"
-        )
-
-    @staticmethod
-    def _build_polish_prompt(draft_text: str) -> str:
-        """Build the polishing prompt from spec Section 5.3."""
-        return (
-            "Rewrite the following English text to sound natural for a Reddit post.\n"
-            "\n"
-            "Rules:\n"
-            "- Use casual, conversational tone appropriate for Reddit\n"
-            '- Add common Reddit expressions where natural (e.g., "IMO", "FWIW")\n'
-            "- Keep the core meaning intact\n"
-            "- Do not over-use slang - keep it readable\n"
-            "- Match the tone to the subreddit context if provided\n"
-            "- NEVER add facts, details, tool names, or motivations not present in the original\n"
-            "- NEVER invent specific names (e.g., 'Google Translate') unless explicitly mentioned\n"
-            "- Only rephrase existing information - do not expand or embellish\n"
-            "- Output ONLY the rewritten text\n"
-            "\n"
-            f"Original English:\n{draft_text}"
         )
