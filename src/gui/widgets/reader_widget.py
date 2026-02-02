@@ -58,6 +58,7 @@ class ReaderWidget(QWidget):
         self._translated_titles: dict[int, str] = {}  # row index -> translated title
         self._comments_list: list[CommentDTO] = []  # stored for lazy translation
         self._translated_comment_count: int = 0  # how many comments translated so far
+        self._comment_widgets: dict[str, QFrame] = {}  # comment_id -> frame widget
 
         self._init_ui()
         self._load_subreddits()
@@ -502,6 +503,8 @@ class ReaderWidget(QWidget):
         frame_layout = QVBoxLayout(frame)
         frame_layout.setContentsMargins(depth * 20, 4, 4, 4)
 
+        self._comment_widgets[comment.id] = frame
+
         if comment.more_count > 0:
             # "N more comments" placeholder (non-interactive in v1.0)
             more_label = QLabel(
@@ -531,6 +534,7 @@ class ReaderWidget(QWidget):
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
+        self._comment_widgets.clear()
 
     # ------------------------------------------------------------------
     # Comment translation
@@ -617,9 +621,7 @@ class ReaderWidget(QWidget):
         if current_idx is not None:
             translations[current_idx] = " ".join(current_text).strip()
 
-        # Apply translations to comment widgets
-        # Comments in the layout correspond to _comments_list order
-        # We need to find the widget for each comment and add a translation label
+        # Apply translations to comment widgets by comment ID
         body_idx = 0
         for i in range(start, end):
             if i >= len(self._comments_list):
@@ -630,30 +632,28 @@ class ReaderWidget(QWidget):
             body_idx += 1
             translation = translations.get(body_idx, "")
             if translation:
-                self._add_translation_to_comment(i, translation)
+                self._add_translation_to_comment(comment.id, translation)
 
-    def _add_translation_to_comment(self, comment_index: int, translation: str):
-        """Add a translation label below a comment widget in the layout."""
-        # Find the widget at the comment_index position in the comments area
-        if comment_index < self._comments_area.count():
-            item = self._comments_area.itemAt(comment_index)
-            if item and item.widget():
-                frame = item.widget()
-                frame_layout = frame.layout()
-                if frame_layout:
-                    sep = QFrame()
-                    sep.setFrameShape(QFrame.Shape.HLine)
-                    sep.setStyleSheet("color: #555;")
-                    frame_layout.addWidget(sep)
+    def _add_translation_to_comment(self, comment_id: str, translation: str):
+        """Add a translation label below a comment widget."""
+        frame = self._comment_widgets.get(comment_id)
+        if frame is None:
+            return
+        frame_layout = frame.layout()
+        if frame_layout:
+            sep = QFrame()
+            sep.setFrameShape(QFrame.Shape.HLine)
+            sep.setStyleSheet("color: #555;")
+            frame_layout.addWidget(sep)
 
-                    trans_header = QLabel(self._i18n.get("reader.comment_translation"))
-                    trans_header.setStyleSheet("color: #4fc3f7; font-size: 11px; font-weight: bold;")
-                    frame_layout.addWidget(trans_header)
+            trans_header = QLabel(self._i18n.get("reader.comment_translation"))
+            trans_header.setStyleSheet("color: #4fc3f7; font-size: 11px; font-weight: bold;")
+            frame_layout.addWidget(trans_header)
 
-                    trans_label = QLabel(translation)
-                    trans_label.setWordWrap(True)
-                    trans_label.setStyleSheet("color: #ccc;")
-                    frame_layout.addWidget(trans_label)
+            trans_label = QLabel(translation)
+            trans_label.setWordWrap(True)
+            trans_label.setStyleSheet("color: #ccc;")
+            frame_layout.addWidget(trans_label)
 
     def _on_comment_translate_error(self, error_key: str):
         """Comment translation failed - just log."""

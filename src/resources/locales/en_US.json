@@ -54,7 +54,7 @@
     "lang_label": "Language",
     "theme_label": "Theme",
     "llm_group": "LLM",
-    "logic_label": "Logic Model",
+    "logic_label": "Draft Translation Model",
     "persona_label": "Persona Model",
     "summary_label": "Summary Model",
     "host_label": "Ollama Host",

@@ -37,6 +37,7 @@ class WriterService:
             prompt=prompt,
             model="qwen2.5-coder:32b",  # logic model
             num_ctx=32768,
+            temperature=0.3,  # low temperature for faithful translation
             stream=stream,
         )
 
@@ -59,6 +60,7 @@ class WriterService:
             prompt=prompt,
             model="llama3.1:70b",  # persona model
             num_ctx=8192,
+            temperature=0.7,  # moderate creativity for natural Reddit tone
             stream=stream,
         )
 
@@ -69,10 +71,12 @@ class WriterService:
             "Translate the following Korean text to English.\n"
             "\n"
             "Rules:\n"
-            "- Preserve the logical structure and meaning\n"
+            "- Preserve the logical structure and meaning exactly\n"
             "- Use natural English grammar, not literal translation\n"
             "- Keep technical terms accurate\n"
-            "- Do not add explanations or commentary\n"
+            "- NEVER add facts, details, or information not in the original text\n"
+            "- NEVER invent tool names, people, or specific references\n"
+            "- Do not add explanations, commentary, or embellishments\n"
             "- Output ONLY the English translation\n"
             "\n"
             f"Korean text:\n{korean_text}"

@@ -54,7 +54,7 @@
     "lang_label": "언어",
     "theme_label": "테마",
     "llm_group": "LLM",
-    "logic_label": "로직 모델",
+    "logic_label": "1차 번역 모델",
     "persona_label": "페르소나 모델",
     "summary_label": "요약 모델",
     "host_label": "Ollama 호스트",
