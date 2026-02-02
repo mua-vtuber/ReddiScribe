@@ -184,6 +184,79 @@ class ReaderService:
         self._db.delete_summary(post_id, model_type="summary", locale=locale)
         logger.info(f"Deleted summary for post {post_id}")
 
+    def translate_titles(self, titles: list[str], locale: str = "ko_KR",
+                         stream: bool = True) -> Iterator[str]:
+        """Batch-translate post titles via LLM.
+
+        Sends all titles in one prompt for efficiency.
+        The LLM returns numbered translations matching input order.
+
+        Args:
+            titles: List of English post titles
+            locale: Target locale (default: 'ko_KR')
+            stream: Whether to stream tokens
+
+        Yields:
+            Generated text tokens (full response is numbered list of translations)
+        """
+        if locale != "ko_KR" or not titles:
+            return
+
+        target_language = "Korean"
+        numbered = "\n".join(f"{i+1}. {t}" for i, t in enumerate(titles))
+        prompt = (
+            f"Translate each Reddit post title below to {target_language}.\n"
+            f"\n"
+            f"Rules:\n"
+            f"- Translate each title on its own numbered line\n"
+            f"- Keep the same numbering (1. 2. 3. ...)\n"
+            f"- Be concise - titles should be short\n"
+            f"- Output ONLY the numbered translations, nothing else\n"
+            f"\n"
+            f"{numbered}"
+        )
+
+        yield from self._llm.generate(
+            prompt=prompt,
+            model="llama3.1:8b",
+            num_ctx=8192,
+            stream=stream,
+        )
+
+    def translate_comment(self, body: str, locale: str = "ko_KR",
+                          stream: bool = True) -> Iterator[str]:
+        """Translate a single comment body via LLM.
+
+        Args:
+            body: Comment text in English
+            locale: Target locale (default: 'ko_KR')
+            stream: Whether to stream tokens
+
+        Yields:
+            Generated text tokens
+        """
+        if locale != "ko_KR" or not body.strip():
+            return
+
+        target_language = "Korean"
+        prompt = (
+            f"Translate the following Reddit comment to {target_language}.\n"
+            f"\n"
+            f"Rules:\n"
+            f"- Preserve the tone and style\n"
+            f"- Be natural, not literal\n"
+            f"- Output ONLY the translation\n"
+            f"\n"
+            f"{body}"
+        )
+
+        yield from self._llm.generate(
+            prompt=prompt,
+            model="llama3.1:8b",
+            num_ctx=8192,
+            stream=stream,
+        )
+
     @staticmethod
     def _build_summary_prompt(post: PostDTO, target_language: str) -> str:
         """Build the summary prompt from spec Section 5.3.

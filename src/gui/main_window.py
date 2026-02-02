@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QPushButton, QStackedWidget, QStatusBar, QLabel,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 
 from src.core.config_manager import ConfigManager
 from src.core.i18n_manager import I18nManager
@@ -42,7 +42,11 @@ class MainWindow(QMainWindow):
     def _init_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
-        main_layout = QHBoxLayout(central)
+        outer_layout = QVBoxLayout(central)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        main_layout = QHBoxLayout()
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
@@ -87,6 +91,12 @@ class MainWindow(QMainWindow):
         self._settings_widget.locale_changed.connect(self._on_locale_changed)
         self._settings_widget.settings_saved.connect(self._on_settings_saved)
 
+        # Connect activity signals from child widgets
+        self._reader_widget.activity_started.connect(self.on_activity_started)
+        self._reader_widget.activity_finished.connect(self.on_activity_finished)
+        self._writer_widget.activity_started.connect(self.on_activity_started)
+        self._writer_widget.activity_finished.connect(self.on_activity_finished)
+
         self._stack.addWidget(self._reader_widget)   # index 0
         self._stack.addWidget(self._writer_widget)    # index 1
         self._stack.addWidget(self._settings_widget)  # index 2
@@ -96,6 +106,47 @@ class MainWindow(QMainWindow):
         # === Status bar ===
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
+
+        # === Global activity indicator (top-right) ===
+        self._activity_label = QLabel("")
+        self._activity_label.setStyleSheet(
+            "QLabel {"
+            "  color: #4fc3f7;"
+            "  font-size: 12px;"
+            "  padding: 4px 12px;"
+            "}"
+        )
+        self._activity_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._activity_label.setFixedHeight(24)
+        self._activity_label.hide()
+
+        # Insert activity label at top of the main layout (above stack)
+        # We need to add it to the central widget's layout
+        # Get the main_layout and insert a top bar
+        self._activity_bar = QWidget()
+        activity_bar_layout = QHBoxLayout(self._activity_bar)
+        activity_bar_layout.setContentsMargins(0, 0, 8, 0)
+        activity_bar_layout.addStretch()
+        activity_bar_layout.addWidget(self._activity_label)
+        self._activity_bar.setFixedHeight(28)
+        self._activity_bar.hide()
+
+        # Activity animation timer
+        self._activity_timer = QTimer(self)
+        self._activity_timer.setInterval(500)
+        self._activity_timer.timeout.connect(self._update_activity_animation)
+        self._activity_dot_count = 0
+
+        # Elapsed time timer
+        self._elapsed_timer = QTimer(self)
+        self._elapsed_timer.setInterval(1000)
+        self._elapsed_timer.timeout.connect(self._update_elapsed_time)
+        self._elapsed_seconds = 0
+        self._activity_task_name = ""
+
+        # Add activity bar and main layout to outer layout
+        outer_layout.addWidget(self._activity_bar)
+        outer_layout.addLayout(main_layout)
 
     def _switch_view(self, index: int):
         """Switch the stacked widget and update nav button styles."""
@@ -111,6 +162,36 @@ class MainWindow(QMainWindow):
 
     def _on_settings_saved(self):
         self._status_bar.showMessage(self._i18n.get("status.settings_saved"), 3000)
+
+    def on_activity_started(self, task_name: str):
+        """Show global activity indicator with task name and start elapsed timer."""
+        self._activity_task_name = task_name
+        self._elapsed_seconds = 0
+        self._activity_dot_count = 0
+        self._activity_label.setText(f"{task_name}")
+        self._activity_bar.show()
+        self._activity_label.show()
+        self._activity_timer.start()
+        self._elapsed_timer.start()
+
+    def on_activity_finished(self):
+        """Hide global activity indicator and stop timers."""
+        self._activity_timer.stop()
+        self._elapsed_timer.stop()
+        self._activity_bar.hide()
+        self._activity_label.hide()
+        self._activity_label.setText("")
+
+    def _update_activity_animation(self):
+        """Animate dots in the activity label."""
+        self._activity_dot_count = (self._activity_dot_count + 1) % 4
+        dots = "." * self._activity_dot_count
+        elapsed_text = self._i18n.get("status.elapsed", seconds=str(self._elapsed_seconds))
+        self._activity_label.setText(f"{self._activity_task_name}{dots} {elapsed_text}")
+
+    def _update_elapsed_time(self):
+        """Increment elapsed seconds counter."""
+        self._elapsed_seconds += 1
 
     def retranslate_ui(self):
         """Update all UI text across the entire application."""

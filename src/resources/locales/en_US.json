@@ -10,7 +10,13 @@
   "status": {
     "initializing": "Initializing...",
     "settings_saved": "Settings saved",
-    "language_changed": "Language changed"
+    "language_changed": "Language changed",
+    "reader_summary": "Generating summary...",
+    "reader_titles": "Translating titles...",
+    "reader_comments": "Translating comments...",
+    "writer_draft": "Translating draft...",
+    "writer_polish": "Polishing text...",
+    "elapsed": "({seconds}s)"
   },
   "reader": {
     "subreddits": "Subreddits",
@@ -24,7 +30,11 @@
     "remove_sub": "Remove",
     "no_posts": "No posts found",
     "loading": "Loading...",
-    "more_comments": "{count} more comments"
+    "more_comments": "{count} more comments",
+    "translating_titles": "Translating titles...",
+    "translating_comments": "Translating comments...",
+    "translate_comment_btn": "Translate",
+    "comment_translation": "Translation:"
   },
   "writer": {
     "header": "Writer",
@@ -35,7 +45,8 @@
     "draft_only": "Draft only",
     "copy_btn": "Copy to Clipboard",
     "stop_btn": "Stop",
-    "copied": "Copied!"
+    "copied": "Copied!",
+    "generating": "Generating..."
   },
   "settings": {
     "header": "Settings",

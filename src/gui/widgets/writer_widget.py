@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QTextEdit, QCheckBox,
     QApplication,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 
 from src.core.i18n_manager import I18nManager
 from src.gui.workers import GenerationWorker
@@ -20,6 +20,9 @@ logger = logging.getLogger("reddiscribe")
 class WriterWidget(QWidget):
     """Writer tab - 2-stage translation pipeline UI."""
 
+    activity_started = pyqtSignal(str)   # task name for global status
+    activity_finished = pyqtSignal()     # task completed
+
     def __init__(self, writer_service: WriterService, parent=None):
         super().__init__(parent)
         self._writer = writer_service
@@ -30,6 +33,13 @@ class WriterWidget(QWidget):
         self._draft_text: str = ""  # collected draft for Stage 2 input
 
         self._init_ui()
+
+        # Loading animation
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(500)
+        self._anim_timer.timeout.connect(self._animate_loading)
+        self._anim_dot_count = 0
+        self._anim_target: Optional[QTextEdit] = None
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -103,6 +113,7 @@ class WriterWidget(QWidget):
         # UI state: translating
         self._translate_btn.setEnabled(False)
         self._stop_btn.setEnabled(True)
+        self.activity_started.emit(self._i18n.get("status.writer_draft"))
 
         # Start Stage 1
         self._start_draft(korean_text)
@@ -118,9 +129,11 @@ class WriterWidget(QWidget):
         self._draft_worker.finished_signal.connect(self._on_draft_finished)
         self._draft_worker.error_occurred.connect(self._on_error)
         self._draft_worker.configure(self._writer.draft, korean_text)
+        self._start_loading_animation(self._draft_output)
         self._draft_worker.start()
 
     def _on_draft_token(self, token: str):
+        self._stop_loading_animation()
         cursor = self._draft_output.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)
         cursor.insertText(token)
@@ -148,9 +161,12 @@ class WriterWidget(QWidget):
         self._polish_worker.finished_signal.connect(self._on_polish_finished)
         self._polish_worker.error_occurred.connect(self._on_error)
         self._polish_worker.configure(self._writer.polish, english_draft)
+        self._start_loading_animation(self._final_output)
+        self.activity_started.emit(self._i18n.get("status.writer_polish"))
         self._polish_worker.start()
 
     def _on_polish_token(self, token: str):
+        self._stop_loading_animation()
         cursor = self._final_output.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)
         cursor.insertText(token)
@@ -163,6 +179,8 @@ class WriterWidget(QWidget):
         self._translate_btn.setEnabled(True)
         self._stop_btn.setEnabled(False)
         self._copy_btn.setEnabled(True)
+        self._stop_loading_animation()
+        self.activity_finished.emit()
 
     def _on_stop(self):
         """Stop current generation."""
@@ -197,3 +215,26 @@ class WriterWidget(QWidget):
         self._draft_label.setText(self._i18n.get("writer.draft_label"))
         self._final_label.setText(self._i18n.get("writer.final_label"))
         self._copy_btn.setText(self._i18n.get("writer.copy_btn"))
+
+    def _start_loading_animation(self, target: QTextEdit):
+        """Start animated '생성 중...' in a text area."""
+        self._anim_target = target
+        self._anim_dot_count = 0
+        self._anim_timer.start()
+        self._animate_loading()  # show immediately
+
+    def _stop_loading_animation(self):
+        """Stop the loading animation."""
+        self._anim_timer.stop()
+        self._anim_target = None
+
+    def _animate_loading(self):
+        """Update the animated loading text."""
+        if self._anim_target is None:
+            return
+        self._anim_dot_count = (self._anim_dot_count + 1) % 4
+        dots = "." * self._anim_dot_count
+        base = self._i18n.get("writer.generating")
+        # Remove trailing dots from base and add animated dots
+        base_clean = base.rstrip(".")
+        self._anim_target.setPlaceholderText(f"{base_clean}{dots}")

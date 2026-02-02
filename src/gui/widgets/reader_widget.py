@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QTextEdit, QComboBox, QScrollArea,
     QFrame, QInputDialog,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 
 from src.core.i18n_manager import I18nManager
 from src.core.types import PostDTO, CommentDTO
@@ -20,6 +20,7 @@ logger = logging.getLogger("reddiscribe")
 
 # Client-side rendering depth limit (spec 7.2)
 MAX_COMMENT_DEPTH = 5
+COMMENTS_TRANSLATE_BATCH = 5
 
 
 class ReaderWidget(QWidget):
@@ -29,6 +30,9 @@ class ReaderWidget(QWidget):
         Left panel:  subreddit list from config + add/remove buttons
         Right panel: post list with sort selector, summary/original panes, comment tree
     """
+
+    activity_started = pyqtSignal(str)
+    activity_finished = pyqtSignal()
 
     def __init__(self, reader_service: ReaderService, config, parent=None):
         """Initialize the reader widget.
@@ -49,9 +53,21 @@ class ReaderWidget(QWidget):
         self._fetch_worker: Optional[RedditFetchWorker] = None
         self._comment_worker: Optional[RedditFetchWorker] = None
         self._gen_worker: Optional[GenerationWorker] = None
+        self._title_worker: Optional[GenerationWorker] = None
+        self._comment_translate_worker: Optional[GenerationWorker] = None
+        self._translated_titles: dict[int, str] = {}  # row index -> translated title
+        self._comments_list: list[CommentDTO] = []  # stored for lazy translation
+        self._translated_comment_count: int = 0  # how many comments translated so far
 
         self._init_ui()
         self._load_subreddits()
+
+        # Loading animation
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(500)
+        self._anim_timer.timeout.connect(self._animate_loading)
+        self._anim_dot_count = 0
+        self._anim_target: Optional[QTextEdit] = None
 
     # ------------------------------------------------------------------
     # UI Construction
@@ -179,6 +195,8 @@ class ReaderWidget(QWidget):
         content_layout.addStretch()
 
         content_area.setWidget(content_widget)
+        content_area.verticalScrollBar().valueChanged.connect(self._on_content_scroll)
+        self._content_scroll = content_area
         panel_layout.addWidget(content_area)
 
         return panel
@@ -280,9 +298,10 @@ class ReaderWidget(QWidget):
         self._posts_label.setText(self._i18n.get("reader.loading"))
 
     def _on_posts_ready(self, posts: list):
-        """Populate post list when async fetch completes."""
+        """Populate post list when async fetch completes, then start title translation."""
         self._current_posts = posts
         self._post_list.clear()
+        self._translated_titles = {}
         self._posts_label.setText(self._i18n.get("reader.posts"))
 
         if not posts:
@@ -293,9 +312,62 @@ class ReaderWidget(QWidget):
             item_text = f"{post.title}  [\u2191{post.score}]  [\U0001f4ac{post.num_comments}]"
             self._post_list.addItem(item_text)
 
+        # Start title translation (async)
+        locale = self._config.get("app.locale", "ko_KR")
+        if locale == "ko_KR":
+            self._start_title_translation(posts)
+
     def _on_fetch_error(self, error_key: str):
         """Show localized error in the posts label."""
         self._posts_label.setText(self._i18n.get(error_key))
+
+    # ------------------------------------------------------------------
+    # Title translation
+    # ------------------------------------------------------------------
+
+    def _start_title_translation(self, posts: list[PostDTO]):
+        """Start async batch title translation."""
+        if self._title_worker and self._title_worker.isRunning():
+            self._title_worker.stop()
+            self._title_worker.wait(2000)
+
+        self.activity_started.emit(self._i18n.get("status.reader_titles"))
+
+        titles = [p.title for p in posts]
+        self._title_worker = GenerationWorker()
+        self._title_worker.finished_signal.connect(self._on_titles_translated)
+        self._title_worker.error_occurred.connect(self._on_title_translate_error)
+
+        locale = self._config.get("app.locale", "ko_KR")
+        self._title_worker.configure(self._reader.translate_titles, titles, locale=locale)
+        self._title_worker.start()
+
+    def _on_titles_translated(self, full_text: str):
+        """Parse numbered translations and update post list items."""
+        self.activity_finished.emit()
+        lines = full_text.strip().split("\n")
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            # Parse "1. translated title" format
+            dot_pos = line.find(". ")
+            if dot_pos > 0:
+                try:
+                    idx = int(line[:dot_pos]) - 1  # 1-based to 0-based
+                    translated = line[dot_pos + 2:]
+                    if 0 <= idx < self._post_list.count():
+                        self._translated_titles[idx] = translated
+                        post = self._current_posts[idx]
+                        item_text = f"{translated}\n{post.title}  [\u2191{post.score}]  [\U0001f4ac{post.num_comments}]"
+                        self._post_list.item(idx).setText(item_text)
+                except (ValueError, IndexError):
+                    continue
+
+    def _on_title_translate_error(self, error_key: str):
+        """Title translation failed - just log, posts still show English titles."""
+        self.activity_finished.emit()
+        logger.warning(f"Title translation failed: {error_key}")
 
     # ------------------------------------------------------------------
     # Post selection -> summary + original + comments
@@ -336,6 +408,8 @@ class ReaderWidget(QWidget):
 
         self._summary_text.clear()
         self._summary_text.setPlaceholderText(self._i18n.get("reader.generating"))
+        self._start_loading_animation(self._summary_text)
+        self.activity_started.emit(self._i18n.get("status.reader_summary"))
 
         self._gen_worker = GenerationWorker()
         self._gen_worker.token_received.connect(self._on_summary_token)
@@ -348,6 +422,7 @@ class ReaderWidget(QWidget):
 
     def _on_summary_token(self, token: str):
         """Append a streamed token to the summary text edit."""
+        self._stop_loading_animation()
         self._summary_text.setPlaceholderText("")
         cursor = self._summary_text.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)
@@ -356,9 +431,12 @@ class ReaderWidget(QWidget):
     def _on_summary_finished(self, full_text: str):
         """Replace streaming text with final complete summary."""
         self._summary_text.setPlainText(full_text)
+        self.activity_finished.emit()
 
     def _on_gen_error(self, error_key: str):
         """Show localized error when summary generation fails."""
+        self._stop_loading_animation()
+        self.activity_finished.emit()
         self._summary_text.setPlaceholderText("")
         self._summary_text.setPlainText(self._i18n.get(error_key))
 
@@ -390,10 +468,16 @@ class ReaderWidget(QWidget):
         self._comment_worker.start()
 
     def _on_comments_ready(self, comments: list):
-        """Render the comment tree when async fetch completes."""
+        """Render comment tree and auto-translate first batch."""
         self._clear_comments()
+        self._comments_list = comments
+        self._translated_comment_count = 0
         for comment in comments:
             self._add_comment_widget(comment, self._comments_area, depth=0)
+        # Auto-translate first batch
+        locale = self._config.get("app.locale", "ko_KR")
+        if locale == "ko_KR" and comments:
+            self._translate_next_comments_batch()
 
     def _add_comment_widget(
         self,
@@ -447,6 +531,175 @@ class ReaderWidget(QWidget):
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
+
+    # ------------------------------------------------------------------
+    # Comment translation
+    # ------------------------------------------------------------------
+
+    def _translate_next_comments_batch(self):
+        """Translate the next batch of comments."""
+        # Collect untranslated top-level comment bodies
+        start = self._translated_comment_count
+        end = min(start + COMMENTS_TRANSLATE_BATCH, len(self._comments_list))
+
+        if start >= len(self._comments_list):
+            return
+
+        comments_to_translate = self._comments_list[start:end]
+        bodies = [c.body for c in comments_to_translate if c.body and c.more_count == 0]
+
+        if not bodies:
+            self._translated_comment_count = end
+            return
+
+        self.activity_started.emit(self._i18n.get("status.reader_comments"))
+
+        # Batch translate using a combined prompt
+        combined = "\n---\n".join(f"[{i+1}] {b}" for i, b in enumerate(bodies))
+        prompt_text = (
+            f"Translate each numbered Reddit comment below to Korean.\n"
+            f"\n"
+            f"Rules:\n"
+            f"- Keep the same numbering [1] [2] [3]...\n"
+            f"- Preserve tone and style\n"
+            f"- Output ONLY the numbered translations\n"
+            f"\n"
+            f"{combined}"
+        )
+
+        if self._comment_translate_worker and self._comment_translate_worker.isRunning():
+            self._comment_translate_worker.stop()
+            self._comment_translate_worker.wait(2000)
+
+        self._comment_translate_worker = GenerationWorker()
+        self._comment_translate_worker.finished_signal.connect(
+            lambda text: self._on_comments_translated(text, start, end)
+        )
+        self._comment_translate_worker.error_occurred.connect(self._on_comment_translate_error)
+
+        locale = self._config.get("app.locale", "ko_KR")
+        # Use LLM directly via the reader's translate method pattern
+        self._comment_translate_worker.configure(
+            self._reader._llm.generate,
+            prompt=prompt_text,
+            model="llama3.1:8b",
+            num_ctx=8192,
+        )
+        self._comment_translate_worker.start()
+
+    def _on_comments_translated(self, full_text: str, start: int, end: int):
+        """Parse translated comments and add translation labels to comment widgets."""
+        self.activity_finished.emit()
+        self._translated_comment_count = end
+
+        # Parse translations by [N] markers
+        translations = {}
+        current_idx = None
+        current_text = []
+        for line in full_text.strip().split("\n"):
+            line = line.strip()
+            # Check for [N] pattern
+            if line.startswith("[") and "]" in line:
+                bracket_end = line.index("]")
+                try:
+                    idx = int(line[1:bracket_end])
+                    if current_idx is not None:
+                        translations[current_idx] = " ".join(current_text).strip()
+                    current_idx = idx
+                    current_text = [line[bracket_end + 1:].strip()]
+                except ValueError:
+                    if current_idx is not None:
+                        current_text.append(line)
+            else:
+                if current_idx is not None:
+                    current_text.append(line)
+
+        if current_idx is not None:
+            translations[current_idx] = " ".join(current_text).strip()
+
+        # Apply translations to comment widgets
+        # Comments in the layout correspond to _comments_list order
+        # We need to find the widget for each comment and add a translation label
+        body_idx = 0
+        for i in range(start, end):
+            if i >= len(self._comments_list):
+                break
+            comment = self._comments_list[i]
+            if not comment.body or comment.more_count > 0:
+                continue
+            body_idx += 1
+            translation = translations.get(body_idx, "")
+            if translation:
+                self._add_translation_to_comment(i, translation)
+
+    def _add_translation_to_comment(self, comment_index: int, translation: str):
+        """Add a translation label below a comment widget in the layout."""
+        # Find the widget at the comment_index position in the comments area
+        if comment_index < self._comments_area.count():
+            item = self._comments_area.itemAt(comment_index)
+            if item and item.widget():
+                frame = item.widget()
+                frame_layout = frame.layout()
+                if frame_layout:
+                    sep = QFrame()
+                    sep.setFrameShape(QFrame.Shape.HLine)
+                    sep.setStyleSheet("color: #555;")
+                    frame_layout.addWidget(sep)
+
+                    trans_header = QLabel(self._i18n.get("reader.comment_translation"))
+                    trans_header.setStyleSheet("color: #4fc3f7; font-size: 11px; font-weight: bold;")
+                    frame_layout.addWidget(trans_header)
+
+                    trans_label = QLabel(translation)
+                    trans_label.setWordWrap(True)
+                    trans_label.setStyleSheet("color: #ccc;")
+                    frame_layout.addWidget(trans_label)
+
+    def _on_comment_translate_error(self, error_key: str):
+        """Comment translation failed - just log."""
+        self.activity_finished.emit()
+        logger.warning(f"Comment translation failed: {error_key}")
+
+    # ------------------------------------------------------------------
+    # Scroll-based lazy loading
+    # ------------------------------------------------------------------
+
+    def _on_content_scroll(self, value: int):
+        """Detect when user scrolls near bottom and translate more comments."""
+        scrollbar = self._content_scroll.verticalScrollBar()
+        if scrollbar.maximum() == 0:
+            return
+        # If scrolled past 80% of content
+        if value > scrollbar.maximum() * 0.8:
+            if self._translated_comment_count < len(self._comments_list):
+                # Only translate if no translation is currently running
+                if not (self._comment_translate_worker and self._comment_translate_worker.isRunning()):
+                    self._translate_next_comments_batch()
+
+    # ------------------------------------------------------------------
+    # Loading animation
+    # ------------------------------------------------------------------
+
+    def _start_loading_animation(self, target: QTextEdit):
+        """Start animated loading text in a QTextEdit."""
+        self._anim_target = target
+        self._anim_dot_count = 0
+        self._anim_timer.start()
+        self._animate_loading()
+
+    def _stop_loading_animation(self):
+        """Stop the loading animation."""
+        self._anim_timer.stop()
+        self._anim_target = None
+
+    def _animate_loading(self):
+        """Update animated dots."""
+        if self._anim_target is None:
+            return
+        self._anim_dot_count = (self._anim_dot_count + 1) % 4
+        dots = "." * self._anim_dot_count
+        base = self._i18n.get("reader.generating").rstrip(".")
+        self._anim_target.setPlaceholderText(f"{base}{dots}")
 
     # ------------------------------------------------------------------
     # i18n hot-reload

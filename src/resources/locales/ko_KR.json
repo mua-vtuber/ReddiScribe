@@ -10,7 +10,13 @@
   "status": {
     "initializing": "초기화 중...",
     "settings_saved": "설정이 저장되었습니다",
-    "language_changed": "언어가 변경되었습니다"
+    "language_changed": "언어가 변경되었습니다",
+    "reader_summary": "읽기 요약 생성 중...",
+    "reader_titles": "제목 번역 중...",
+    "reader_comments": "댓글 번역 중...",
+    "writer_draft": "작성 번역 중...",
+    "writer_polish": "작성 다듬기 중...",
+    "elapsed": "({seconds}초)"
   },
   "reader": {
     "subreddits": "서브레딧",
@@ -24,7 +30,11 @@
     "remove_sub": "제거",
     "no_posts": "게시글이 없습니다",
     "loading": "로딩 중...",
-    "more_comments": "{count}개 댓글 더보기"
+    "more_comments": "{count}개 댓글 더보기",
+    "translating_titles": "제목 번역 중...",
+    "translating_comments": "댓글 번역 중...",
+    "translate_comment_btn": "번역",
+    "comment_translation": "번역:"
   },
   "writer": {
     "header": "작성기",
@@ -35,7 +45,8 @@
     "draft_only": "초안만",
     "copy_btn": "클립보드에 복사",
     "stop_btn": "중지",
-    "copied": "복사됨!"
+    "copied": "복사됨!",
+    "generating": "생성 중..."
   },
   "settings": {
     "header": "설정",
