@@ -1,0 +1,68 @@
+{
+  "app": {
+    "title": "ReddiScribe"
+  },
+  "nav": {
+    "write": "Write",
+    "read": "Read",
+    "settings": "Settings"
+  },
+  "status": {
+    "initializing": "Initializing...",
+    "settings_saved": "Settings saved",
+    "language_changed": "Language changed"
+  },
+  "reader": {
+    "subreddits": "Subreddits",
+    "posts": "Posts",
+    "summary": "AI Summary",
+    "original": "Original",
+    "comments": "Comments",
+    "generating": "Generating summary...",
+    "refresh": "Refresh",
+    "add_sub": "Add",
+    "remove_sub": "Remove",
+    "no_posts": "No posts found",
+    "loading": "Loading...",
+    "more_comments": "{count} more comments"
+  },
+  "writer": {
+    "header": "Writer",
+    "placeholder": "Write in Korean...",
+    "translate_btn": "Translate",
+    "draft_label": "Stage 1: Draft",
+    "final_label": "Stage 2: Final",
+    "draft_only": "Draft only",
+    "copy_btn": "Copy to Clipboard",
+    "stop_btn": "Stop",
+    "copied": "Copied!"
+  },
+  "settings": {
+    "header": "Settings",
+    "app_group": "Application",
+    "lang_label": "Language",
+    "theme_label": "Theme",
+    "llm_group": "LLM",
+    "logic_label": "Logic Model",
+    "persona_label": "Persona Model",
+    "summary_label": "Summary Model",
+    "host_label": "Ollama Host",
+    "timeout_label": "Timeout (sec)",
+    "reddit_group": "Reddit",
+    "interval_label": "Request Interval (sec)",
+    "mock_label": "Mock Mode",
+    "save_btn": "Save",
+    "advanced_group": "Advanced",
+    "log_level_label": "Log Level"
+  },
+  "errors": {
+    "ollama_not_running": "Ollama is not running",
+    "model_not_found": "Model not found: {model}",
+    "llm_timeout": "LLM response timed out",
+    "reddit_fetch_failed": "Failed to fetch Reddit data",
+    "rate_limited": "Too many requests. Please try again later",
+    "subreddit_not_found": "Subreddit not found: r/{subreddit}",
+    "subreddit_private": "Private subreddit: r/{subreddit}",
+    "language_contaminated": "Translation quality is low. Please retry"
+  }
+}

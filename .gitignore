@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Project-specific
+config/settings.yaml
+db/
+logs/
+*.db
+*.log
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Claude
+.omc/
+.claude/

@@ -1,0 +1,68 @@
+{
+  "app": {
+    "title": "ReddiScribe"
+  },
+  "nav": {
+    "write": "작성",
+    "read": "읽기",
+    "settings": "설정"
+  },
+  "status": {
+    "initializing": "초기화 중...",
+    "settings_saved": "설정이 저장되었습니다",
+    "language_changed": "언어가 변경되었습니다"
+  },
+  "reader": {
+    "subreddits": "서브레딧",
+    "posts": "게시글",
+    "summary": "AI 요약",
+    "original": "원문",
+    "comments": "댓글",
+    "generating": "요약 생성 중...",
+    "refresh": "새로고침",
+    "add_sub": "추가",
+    "remove_sub": "제거",
+    "no_posts": "게시글이 없습니다",
+    "loading": "로딩 중...",
+    "more_comments": "{count}개 댓글 더보기"
+  },
+  "writer": {
+    "header": "작성기",
+    "placeholder": "한국어로 작성하세요...",
+    "translate_btn": "번역",
+    "draft_label": "Stage 1: 초안",
+    "final_label": "Stage 2: 최종본",
+    "draft_only": "초안만",
+    "copy_btn": "클립보드에 복사",
+    "stop_btn": "중지",
+    "copied": "복사됨!"
+  },
+  "settings": {
+    "header": "설정",
+    "app_group": "애플리케이션",
+    "lang_label": "언어",
+    "theme_label": "테마",
+    "llm_group": "LLM",
+    "logic_label": "로직 모델",
+    "persona_label": "페르소나 모델",
+    "summary_label": "요약 모델",
+    "host_label": "Ollama 호스트",
+    "timeout_label": "타임아웃 (초)",
+    "reddit_group": "Reddit",
+    "interval_label": "요청 간격 (초)",
+    "mock_label": "Mock 모드",
+    "save_btn": "저장",
+    "advanced_group": "고급",
+    "log_level_label": "로그 레벨"
+  },
+  "errors": {
+    "ollama_not_running": "Ollama가 실행 중이지 않습니다",
+    "model_not_found": "모델을 찾을 수 없습니다: {model}",
+    "llm_timeout": "LLM 응답 시간이 초과되었습니다",
+    "reddit_fetch_failed": "Reddit 데이터를 가져오지 못했습니다",
+    "rate_limited": "요청이 너무 많습니다. 잠시 후 다시 시도하세요",
+    "subreddit_not_found": "서브레딧을 찾을 수 없습니다: r/{subreddit}",
+    "subreddit_private": "비공개 서브레딧입니다: r/{subreddit}",
+    "language_contaminated": "번역 품질이 낮습니다. 다시 시도하세요"
+  }
+}
