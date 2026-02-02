@@ -90,7 +90,7 @@ class TestConfigManagerGetSet:
 
     def test_get_nested_key(self):
         cm = self._make_cm()
-        assert cm.get("llm.models.logic.name") == "qwen2.5-coder:32b"
+        assert cm.get("llm.models.logic.name") == "gemma2:9b"
 
     def test_get_missing_key_returns_default(self):
         cm = self._make_cm()

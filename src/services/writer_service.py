@@ -11,7 +11,7 @@ logger = logging.getLogger("reddiscribe")
 class WriterService:
     """Orchestrates the 2-stage writing pipeline.
 
-    Stage 1 (Draft): Korean -> English translation using logic model (qwen2.5-coder:32b)
+    Stage 1 (Draft): Korean -> English translation using logic model (gemma2:9b)
     Stage 2 (Polish): English draft -> Reddit-ready English using persona model (llama3.1:70b)
     """
 
@@ -36,8 +36,8 @@ class WriterService:
 
         yield from self._llm.generate(
             prompt=prompt,
-            model="qwen2.5-coder:32b",  # logic model
-            num_ctx=32768,
+            model="gemma2:9b",  # logic model
+            num_ctx=8192,
             temperature=0.3,  # low temperature for faithful translation
             stream=stream,
         )
@@ -69,21 +69,19 @@ class WriterService:
     def _build_draft_prompt(korean_text: str, target_lang: str = "English") -> str:
         """Build the drafting (literal translation) prompt."""
         return (
-            f"Literally translate the following Korean text into {target_lang}.\n"
+            f"Translate the following Korean text into {target_lang}.\n"
             "\n"
-            "Rules:\n"
-            "- Keep the colloquial tone as-is\n"
-            "- Only fix grammar, follow Korean word order otherwise\n"
-            "- Do NOT make it sound natural — keep it literal\n"
-            "- Do NOT paraphrase or interpret\n"
-            "- NEVER add facts, details, or information not in the original\n"
+            "Absolute rules for translation:\n"
+            "1. Do NOT change action verbs\n"
+            "   - '보다' (to see/check) ≠ 'subscribe'\n"
+            "   - '만들다' (to make) ≠ 'develop'\n"
+            "2. Do NOT add concepts not in the original\n"
+            "   - '번역해서' (by translating) must NOT be omitted\n"
+            "   - '도구' (tool) must NOT be specified as 'Google Translate' etc.\n"
+            "3. If meaning is ambiguous, add clarification in parentheses\n"
+            "   - e.g., 'checked out (by translating)'\n"
             "- NEVER invent names, tools, or references\n"
             f"- Output ONLY the {target_lang} translation\n"
-            "\n"
-            "Example:\n"
-            "'관심 서브레딧을 번역해서 보고'\n"
-            "→ 'checked a subreddit I'm interested in with translation and'\n"
-            "(It does not need to sound natural — Stage 2 will refine it)\n"
             "\n"
             f"Korean text:\n{korean_text}"
         )

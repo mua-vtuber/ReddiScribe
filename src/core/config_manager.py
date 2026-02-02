@@ -29,7 +29,7 @@ DEFAULT_CONFIG = {
             }
         },
         "models": {
-            "logic": {"name": "qwen2.5-coder:32b", "num_ctx": 32768},
+            "logic": {"name": "gemma2:9b", "num_ctx": 8192},
             "persona": {"name": "llama3.1:70b", "num_ctx": 8192},
             "summary": {"name": "llama3.1:8b", "num_ctx": 8192},
         },
@@ -135,7 +135,7 @@ class ConfigManager:
             >>> config.get("app.locale")
             'ko_KR'
             >>> config.get("llm.models.logic.name")
-            'qwen2.5-coder:32b'
+            'gemma2:9b'
         """
         with self._instance_lock:
             parts = key.split('.')

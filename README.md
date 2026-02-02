@@ -19,7 +19,7 @@ A PyQt6 desktop application for Korean users to browse Reddit with AI-powered Ko
 - Ollama running locally ([https://ollama.ai](https://ollama.ai))
 - Required Ollama models:
   - `llama3.1:8b` — Post titles, comment translation
-  - `qwen2.5-coder:32b` — Translation logic and drafting
+  - `gemma2:9b` — Translation logic and drafting
   - `llama3.1:70b` — Reddit tone polishing
 
 ## Quick Start
@@ -39,7 +39,7 @@ pip install -e .
 
 ```bash
 ollama pull llama3.1:8b
-ollama pull qwen2.5-coder:32b
+ollama pull gemma2:9b
 ollama pull llama3.1:70b
 ```
 

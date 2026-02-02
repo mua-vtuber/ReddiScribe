@@ -27,9 +27,9 @@ class TestDraft:
         list(service.draft("테스트"))
 
         call_kwargs = llm.generate.call_args
-        assert call_kwargs.kwargs.get("model") or call_kwargs[1].get("model") == "qwen2.5-coder:32b"
+        assert call_kwargs.kwargs.get("model") or call_kwargs[1].get("model") == "gemma2:9b"
 
-    def test_uses_32k_context(self):
+    def test_uses_8k_context(self):
         llm = MagicMock()
         llm.generate.return_value = iter(["ok"])
 
@@ -39,7 +39,7 @@ class TestDraft:
         # Check num_ctx in the call
         call_kwargs = llm.generate.call_args
         kwargs = call_kwargs.kwargs if call_kwargs.kwargs else {}
-        assert kwargs.get("num_ctx") == 32768
+        assert kwargs.get("num_ctx") == 8192
 
     def test_prompt_contains_korean_text(self):
         llm = MagicMock()
