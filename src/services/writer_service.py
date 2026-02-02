@@ -18,20 +18,21 @@ class WriterService:
     def __init__(self, llm: LLMAdapter):
         self._llm = llm
 
-    def draft(self, korean_text: str, stream: bool = True) -> Iterator[str]:
-        """Stage 1: Korean -> English draft using logic model.
+    def draft(self, korean_text: str, target_lang: str = "English", stream: bool = True) -> Iterator[str]:
+        """Stage 1: Korean -> target language draft using logic model.
 
         Args:
             korean_text: Input Korean text
+            target_lang: Target language name (e.g. "English", "Korean")
             stream: Whether to stream tokens
 
         Yields:
-            Generated English tokens
+            Generated tokens in target language
 
         Raises:
             OllamaNotRunningError, ModelNotFoundError, LLMTimeoutError
         """
-        prompt = self._build_draft_prompt(korean_text)
+        prompt = self._build_draft_prompt(korean_text, target_lang)
 
         yield from self._llm.generate(
             prompt=prompt,
@@ -65,19 +66,24 @@ class WriterService:
         )
 
     @staticmethod
-    def _build_draft_prompt(korean_text: str) -> str:
-        """Build the drafting (translation) prompt from spec Section 5.3."""
+    def _build_draft_prompt(korean_text: str, target_lang: str = "English") -> str:
+        """Build the drafting (literal translation) prompt."""
         return (
-            "Translate the following Korean text to English.\n"
+            f"Literally translate the following Korean text into {target_lang}.\n"
             "\n"
             "Rules:\n"
-            "- Preserve the logical structure and meaning exactly\n"
-            "- Use natural English grammar, not literal translation\n"
-            "- Keep technical terms accurate\n"
-            "- NEVER add facts, details, or information not in the original text\n"
-            "- NEVER invent tool names, people, or specific references\n"
-            "- Do not add explanations, commentary, or embellishments\n"
-            "- Output ONLY the English translation\n"
+            "- Keep the colloquial tone as-is\n"
+            "- Only fix grammar, follow Korean word order otherwise\n"
+            "- Do NOT make it sound natural — keep it literal\n"
+            "- Do NOT paraphrase or interpret\n"
+            "- NEVER add facts, details, or information not in the original\n"
+            "- NEVER invent names, tools, or references\n"
+            f"- Output ONLY the {target_lang} translation\n"
+            "\n"
+            "Example:\n"
+            "'관심 서브레딧을 번역해서 보고'\n"
+            "→ 'checked a subreddit I'm interested in with translation and'\n"
+            "(It does not need to sound natural — Stage 2 will refine it)\n"
             "\n"
             f"Korean text:\n{korean_text}"
         )
