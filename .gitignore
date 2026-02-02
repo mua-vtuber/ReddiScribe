@@ -37,6 +37,9 @@ logs/
 htmlcov/
 .coverage
 
+# Docs (internal only)
+docs/
+
 # Claude
 .omc/
 .claude/
