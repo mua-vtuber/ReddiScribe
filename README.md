@@ -4,23 +4,21 @@ A PyQt6 desktop application for Korean users to browse Reddit with AI-powered Ko
 
 ## Features
 
-- **Bilingual Reddit browsing** — Browse subreddits with auto-translated Korean post titles
-- **AI-generated summaries** — Get Korean summaries of English posts automatically
-- **Comment translation** — Batch or lazy-loaded comment translations on scroll
-- **2-stage writing pipeline** — Korean → English draft → Reddit-tone polished English
-- **Language contamination detection** — Auto-retry with fallback models if translation quality degrades
-- **Fully offline** — Runs entirely locally with Ollama, no internet dependency after startup
+- **Bilingual Reddit browsing** — Browse subreddits with auto-translated Korean post titles and body
+- **AI translation** — Automatic Korean translation of posts and comments
+- **Lazy comment translation** — Top-level comments auto-translated, replies translated on demand
+- **2-stage writing pipeline** — Korean → English draft (Stage 1) → Reddit-tone polished English (Stage 2)
+- **Refine Chat** — Stage 3 chat panel to iteratively refine translations through AI conversation
+- **Dual write mode** — Write new posts, comments, or replies with context-aware translation
+- **Browser integration** — Submit button opens Reddit with pre-filled content or clipboard copy
+- **Fully offline** — Runs entirely locally with Ollama, no internet dependency after Reddit fetch
 - **Bilingual UI** — Switch between Korean (ko_KR) and English (en_US) interfaces
-- **Mock mode** — Test the UI without network access
 
 ## Requirements
 
 - Python 3.11 or higher
-- Ollama running locally ([https://ollama.ai](https://ollama.ai))
-- Required Ollama models:
-  - `llama3.1:8b` — Post titles, comment translation
-  - `gemma2:9b` — Translation logic and drafting
-  - `llama3.1:70b` — Reddit tone polishing
+- [Ollama](https://ollama.ai) installed and running locally
+- At least one Ollama model pulled (see Model Setup below)
 
 ## Quick Start
 
@@ -35,59 +33,50 @@ cd ReddiScribe
 pip install -e .
 ```
 
-### Pull Ollama Models
+### Model Setup
+
+ReddiScribe uses two model roles, configured in the Settings tab:
+
+| Role | Purpose | Recommendation |
+|------|---------|----------------|
+| **Logic (1차)** | Title/comment translation, English draft generation | Lightweight model recommended (e.g., `gemma2:9b`, `llama3.1:8b`) |
+| **Persona (2차)** | Reddit tone polishing, refine chat | Higher quality model recommended (e.g., `llama3.1:70b`, `qwen2.5:32b`) |
 
 ```bash
-ollama pull llama3.1:8b
+# Example: pull models
 ollama pull gemma2:9b
 ollama pull llama3.1:70b
 ```
 
+> **Note:** Higher quality models produce better results but are slower. Adjust based on your hardware.
+>
+> **Tip:** When first setting up, verify translation quality by having an English-proficient person, AI assistant, or at minimum a machine translator review the Stage 2 output. Check that the final polished text matches your intended tone and meaning before posting to Reddit.
+
 ### Run Application
+
+**Windows:**
+Double-click `run.bat`
 
 **Linux / macOS:**
 ```bash
 python -m src.main
 ```
 
-**Windows:**
-Double-click `run.bat`
-
 ## Configuration
 
-Settings are stored in `config/settings.yaml` and auto-created on first run.
+Settings are stored in `config/settings.yaml` and auto-created on first run. Most settings are configurable via the **Settings tab** in the app.
 
-### Edit Settings
+### Key Settings
 
-1. **Via Settings Tab** — Open the app and go to the Settings tab to adjust:
-   - Locale (Korean / English)
-   - Request interval for Reddit (default: 6 seconds)
-   - Mock mode toggle
-   - Log level
-
-2. **Direct Edit** — Edit `config/settings.yaml` for advanced settings:
-
-```yaml
-app:
-  locale: ko_KR              # ko_KR or en_US
-  log_level: INFO            # DEBUG, INFO, WARNING, ERROR
-
-llm:
-  default_provider: ollama
-  providers:
-    ollama:
-      host: http://localhost:11434
-      timeout: 120
-
-reddit:
-  request_interval_sec: 6    # Enforced due to Reddit rate limits
-  mock_mode: false           # true for UI testing without network
-
-data:
-  db_path: db/history.db
-```
-
-**Note:** Model names (logic, persona, summary) are configurable in `settings.yaml` but not yet via the Settings UI in v1.0.
+| Setting | Description | Default |
+|---------|-------------|---------|
+| Locale | UI language (Korean / English) | ko_KR |
+| Logic model | Model for translation and drafting | (set in Settings) |
+| Persona model | Model for tone polishing | (set in Settings) |
+| Persona prompt | Custom prompt for Stage 2 polishing | (editable in Settings) |
+| Ollama host | Ollama server address | http://localhost:11434 |
+| Request interval | Minimum seconds between Reddit requests | 6 |
+| Subreddit list | Managed via top bar (+) or Settings tab | (default list) |
 
 ## Project Structure
 
@@ -95,23 +84,23 @@ data:
 ReddiScribe/
 ├── src/
 │   ├── core/                # Config, database, i18n, logging, types, exceptions
-│   │   ├── config_manager.py
-│   │   ├── database.py
-│   │   ├── i18n_manager.py
-│   │   └── ...
 │   ├── adapters/            # External API adapters
 │   │   ├── public_json_adapter.py      # Reddit public JSON endpoints
 │   │   └── ollama_adapter.py           # Ollama REST API wrapper
 │   ├── services/            # Business logic layer
-│   │   ├── reader_service.py           # Post reading, translation
-│   │   └── writer_service.py           # 2-stage writing pipeline
+│   │   ├── reader_service.py           # Post fetching, translation
+│   │   └── writer_service.py           # 2-stage writing + refine chat
 │   ├── gui/                 # PyQt6 UI
 │   │   ├── main_window.py
-│   │   ├── widgets/
-│   │   │   ├── reader_tab.py           # Browse & translate
-│   │   │   ├── writer_tab.py           # Write English posts
-│   │   │   └── settings_tab.py         # Configure app
-│   │   └── workers.py                  # QThread workers for async ops
+│   │   ├── task_coordinator.py         # Async task coordination
+│   │   ├── workers.py                  # QThread workers
+│   │   └── widgets/
+│   │       ├── reader_widget.py        # Browse & translate
+│   │       ├── writer_widget.py        # Write with dual mode
+│   │       ├── refine_chat_widget.py   # Stage 3 refine chat
+│   │       ├── settings_widget.py      # Configure app
+│   │       ├── top_bar_widget.py       # Global subreddit selector
+│   │       └── content_view_dialog.py  # Original content viewer
 │   ├── resources/
 │   │   └── locales/
 │   │       ├── ko_KR.json
@@ -139,40 +128,44 @@ pytest tests/ -v
 ## How It Works
 
 ### Reader Tab
-1. Select a subreddit from the sidebar
+1. Select a subreddit from the top bar dropdown (or add new ones with "+")
 2. Posts load with Korean-translated titles
-3. Click a post to view the full English text and auto-generated Korean summary
-4. Comments load lazily with batch translation as you scroll
+3. Click a post to view AI-translated Korean body text
+4. Toggle between original English and Korean translation
+5. Comments auto-translate as you scroll; reply translations available on demand
+6. Click "Write Comment" or "Reply" to switch to Writer with context
 
 ### Writer Tab
-1. **Stage 1:** Write your post in Korean
-2. **Stage 2:** AI translates to English and generates a draft
-3. **Stage 3:** AI polishes the draft for Reddit tone and style
-4. Copy the final result and paste on Reddit
+1. **Stage 1 (Draft):** Write in Korean → AI translates to English draft
+2. **Stage 2 (Polish):** AI rewrites the draft in natural Reddit tone
+3. **Stage 3 (Refine Chat):** Chat with AI to iteratively adjust the translation
+4. **Submit:** Opens Reddit in browser with content ready to post/paste
 
 ### Behind the Scenes
 - Ollama models run locally (no data leaves your machine)
 - Reddit data fetched via public JSON endpoints (no API key needed)
-- 6-second minimum interval enforced between Reddit requests to respect rate limits
-- Translation quality checked automatically; if language contamination detected, retries with fallback models
+- 6-second minimum interval between Reddit requests to respect rate limits
+- Translations cached in local SQLite database
 
 ## Troubleshooting
 
 **"Connection refused to Ollama"**
 - Ensure Ollama is running: `ollama serve`
-- Check host in `config/settings.yaml` (default: `http://localhost:11434`)
+- Check host in Settings or `config/settings.yaml` (default: `http://localhost:11434`)
 
 **"Model not found"**
-- Pull required models: `ollama pull llama3.1:8b` etc.
-- Verify model names in `config/settings.yaml`
+- Pull a model: `ollama pull gemma2:9b`
+- Set model names in the Settings tab (Logic / Persona)
 
 **"Reddit requests timing out"**
-- Increase `request_interval_sec` in settings
+- Increase request interval in Settings
 - Check internet connection
 
+**Posts not loading (403 error)**
+- Some subreddits block unauthenticated "hot" sort; the app automatically falls back to "new" sort
+
 **Enable debug logging**
-- Set `app.log_level: DEBUG` in `config/settings.yaml`
-- Check `logs/` directory for detailed logs
+- Set log level to DEBUG in Settings or `config/settings.yaml`
 
 ## License
 
