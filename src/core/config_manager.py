@@ -29,9 +29,9 @@ DEFAULT_CONFIG = {
             }
         },
         "models": {
-            "logic": {"name": "gemma2:9b", "num_ctx": 8192, "temperature": 0.3},
+            "logic": {"name": "", "num_ctx": 8192, "temperature": 0.3},
             "persona": {
-                "name": "llama3.1:70b",
+                "name": "",
                 "num_ctx": 8192,
                 "temperature": 0.7,
                 "prompt": (
@@ -49,7 +49,7 @@ DEFAULT_CONFIG = {
                     "- Output ONLY the rewritten text"
                 ),
             },
-            "summary": {"name": "llama3.1:8b", "num_ctx": 8192},
+            "summary": {"name": "", "num_ctx": 8192},
         },
         "generation": {
             "temperature": 0.7,
@@ -57,7 +57,7 @@ DEFAULT_CONFIG = {
         },
     },
     "reddit": {
-        "subreddits": ["python", "programming", "learnpython"],
+        "subreddits": ["AI_Application", "AiBuilders", "AIDevHub", "ClaudeCode"],
         "request_interval_sec": 6,
         "max_retries": 3,
         "mock_mode": False,
@@ -153,7 +153,7 @@ class ConfigManager:
             >>> config.get("app.locale")
             'ko_KR'
             >>> config.get("llm.models.logic.name")
-            'gemma2:9b'
+            ''
         """
         with self._instance_lock:
             parts = key.split('.')
@@ -166,6 +166,22 @@ class ConfigManager:
                     return default
 
             return value
+
+    def get_missing_models(self, roles: list[str]) -> list[str]:
+        """Check which model roles have empty/missing names.
+
+        Args:
+            roles: List of model role keys, e.g. ["logic", "persona", "summary"]
+
+        Returns:
+            List of role keys that have empty or missing model names.
+        """
+        missing = []
+        for role in roles:
+            name = self.get(f"llm.models.{role}.name", "")
+            if not name:
+                missing.append(role)
+        return missing
 
     def set(self, key: str, value: Any) -> None:
         """Set configuration value using dot-notation key.

@@ -44,3 +44,20 @@ class SummaryDTO:
     model_type: str                  # 'summary', 'logic', 'persona'
     text: str
     locale: str = "ko_KR"
+
+
+@dataclass
+class WriterContext:
+    """Context for passing data from Reader to Writer.
+
+    Used when user clicks 'Write Comment' or 'Reply' on a post/comment.
+    """
+    mode: str  # "new_post" | "comment" | "reply"
+    subreddit: str = ""
+    post_title: str = ""
+    post_permalink: str = ""
+    post_selftext: str = ""
+    comment_id: str = ""
+    comment_body: str = ""
+    comment_author: str = ""
+    parent_thread: list = field(default_factory=list)  # list[dict] for reply thread

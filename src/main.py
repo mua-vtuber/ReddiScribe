@@ -64,14 +64,14 @@ def main():
     )
 
     # 6. Create services (inject adapters)
-    reader_service = ReaderService(reddit_adapter, ollama_adapter, db)
+    reader_service = ReaderService(reddit_adapter, ollama_adapter, db, config)
     writer_service = WriterService(ollama_adapter, config)
 
     # 7. Create QApplication
     app = QApplication(sys.argv)
 
     # 8. Create MainWindow (inject services)
-    window = MainWindow(reader_service, writer_service, config)
+    window = MainWindow(reader_service, writer_service, config, ollama_adapter, reddit_adapter)
 
     # 9. Show window
     window.show()
@@ -81,6 +81,7 @@ def main():
     exit_code = app.exec()
 
     # Cleanup
+    ollama_adapter.unload_models()
     db.close()
     logger.info("ReddiScribe shutting down")
 

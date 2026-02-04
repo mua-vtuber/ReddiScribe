@@ -86,12 +86,21 @@ class PublicJSONAdapter(RedditAdapter):
         if self._mock_mode:
             return self._mock_posts(subreddit)
 
-        params = {"limit": limit, "raw_json": 1}
+        params = {"limit": limit, "raw_json": 1, "include_over_18": "on"}
         if sort == "top" and time_filter:
             params["t"] = time_filter
 
         url = f"{self.BASE_URL}/r/{subreddit}/{sort}.json"
-        data = self._fetch_json(url, params)
+        try:
+            data = self._fetch_json(url, params)
+        except SubredditPrivateError:
+            if sort != "new":
+                # Reddit sometimes blocks hot/top.json for unauthenticated access
+                logger.warning(f"Sort '{sort}' returned 403 for r/{subreddit}, falling back to 'new'")
+                url = f"{self.BASE_URL}/r/{subreddit}/new.json"
+                data = self._fetch_json(url, params)
+            else:
+                raise
 
         posts = []
         for child in data.get("data", {}).get("children", []):
@@ -138,6 +147,14 @@ class PublicJSONAdapter(RedditAdapter):
             if parsed:
                 comments.append(parsed)
         return comments
+
+    def validate_subreddit(self, name: str) -> bool:
+        """Validate subreddit by fetching /r/{name}/about.json."""
+        if self._mock_mode:
+            return True
+        url = f"{self.BASE_URL}/r/{name}/about.json"
+        self._fetch_json(url, {"raw_json": 1})
+        return True
 
     def _fetch_json(self, url: str, params: dict) -> dict | list:
         """Fetch JSON from Reddit with rate limiting and error handling.

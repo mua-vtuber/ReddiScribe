@@ -60,3 +60,20 @@ class RedditAdapter(ABC):
             RateLimitError: 429 Too Many Requests
         """
         ...
+
+    @abstractmethod
+    def validate_subreddit(self, name: str) -> bool:
+        """Validate that a subreddit exists and is accessible.
+
+        Args:
+            name: Subreddit name (without r/ prefix)
+
+        Returns:
+            True if subreddit exists and is accessible.
+
+        Raises:
+            SubredditNotFoundError: 404 Not Found
+            SubredditPrivateError: 403 Forbidden
+            RedditFetchError: Other fetch errors
+        """
+        ...

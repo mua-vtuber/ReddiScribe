@@ -1,44 +1,47 @@
-"""Reader widget for browsing Reddit posts with AI summaries."""
+"""Reader widget for browsing Reddit posts with AI translation."""
 
 import logging
 from typing import Optional
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
+    QWidget, QVBoxLayout, QHBoxLayout,
     QListWidget, QListWidgetItem, QPushButton, QLabel,
     QTextEdit, QComboBox, QScrollArea,
-    QFrame, QInputDialog,
+    QFrame, QMessageBox,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 
 from src.core.i18n_manager import I18nManager
-from src.core.types import PostDTO, CommentDTO
+from src.core.types import PostDTO, CommentDTO, WriterContext
 from src.gui.workers import RedditFetchWorker, GenerationWorker
+from src.gui.task_coordinator import TaskCoordinator
 from src.services.reader_service import ReaderService
 
 logger = logging.getLogger("reddiscribe")
 
 # Client-side rendering depth limit (spec 7.2)
 MAX_COMMENT_DEPTH = 5
-COMMENTS_TRANSLATE_BATCH = 5
+COMMENTS_RENDER_BATCH = 5
 
 
 class ReaderWidget(QWidget):
-    """Reader tab - browse subreddits, read posts, get AI summaries.
+    """Reader tab - browse subreddits, read posts, get AI translation.
 
     Layout (spec Section 7.2):
-        Left panel:  subreddit list from config + add/remove buttons
-        Right panel: post list with sort selector, summary/original panes, comment tree
+        Post list with sort selector, translation/original panes, comment tree.
+        Subreddit selection is managed by MainWindow via TopBar.
     """
 
     activity_started = pyqtSignal(str)
-    activity_finished = pyqtSignal()
+    activity_finished = pyqtSignal(str)
+    navigate_to_settings = pyqtSignal()
+    write_requested = pyqtSignal(object)  # WriterContext
 
-    def __init__(self, reader_service: ReaderService, config, parent=None):
+    def __init__(self, reader_service: ReaderService, config, coordinator: TaskCoordinator, parent=None):
         """Initialize the reader widget.
 
         Args:
-            reader_service: ReaderService instance for data fetching and summarization.
+            reader_service: ReaderService instance for data fetching and translation.
             config: ConfigManager instance for persisting subreddit list and reading locale.
             parent: Optional parent QWidget.
         """
@@ -48,6 +51,7 @@ class ReaderWidget(QWidget):
         self._i18n = I18nManager()
         self._current_posts: list[PostDTO] = []
         self._current_post: Optional[PostDTO] = None
+        self._current_subreddit: str = ""
 
         # Workers (kept as instance attrs to prevent GC and allow stop)
         self._fetch_worker: Optional[RedditFetchWorker] = None
@@ -56,12 +60,15 @@ class ReaderWidget(QWidget):
         self._title_worker: Optional[GenerationWorker] = None
         self._comment_translate_worker: Optional[GenerationWorker] = None
         self._translated_titles: dict[int, str] = {}  # row index -> translated title
-        self._comments_list: list[CommentDTO] = []  # stored for lazy translation
+        self._comments_list: list[CommentDTO] = []  # stored for lazy rendering
         self._translated_comment_count: int = 0  # how many comments translated so far
+        self._rendered_comment_count: int = 0  # how many top-level comments rendered
+        self._showing_original: bool = False  # toggle state for original/translation
+        self._coordinator = coordinator
         self._comment_widgets: dict[str, QFrame] = {}  # comment_id -> frame widget
+        self._more_indicator = None
 
         self._init_ui()
-        self._load_subreddits()
 
         # Loading animation
         self._anim_timer = QTimer(self)
@@ -76,47 +83,12 @@ class ReaderWidget(QWidget):
 
     def _init_ui(self):
         """Build the full reader layout."""
-        layout = QHBoxLayout(self)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-
-        # === Left panel: subreddit list ===
-        left_panel = self._build_left_panel()
-        splitter.addWidget(left_panel)
-
-        # === Right panel: posts + content + comments ===
+        # Posts + content + comments
         right_panel = self._build_right_panel()
-        splitter.addWidget(right_panel)
-
-        splitter.setStretchFactor(0, 1)   # left panel smaller
-        splitter.setStretchFactor(1, 3)   # right panel larger
-
-        layout.addWidget(splitter)
-
-    def _build_left_panel(self) -> QWidget:
-        """Build the subreddit list panel with add/remove buttons."""
-        panel = QWidget()
-        panel_layout = QVBoxLayout(panel)
-
-        self._sub_label = QLabel(self._i18n.get("reader.subreddits"))
-        panel_layout.addWidget(self._sub_label)
-
-        self._sub_list = QListWidget()
-        self._sub_list.currentItemChanged.connect(self._on_subreddit_selected)
-        panel_layout.addWidget(self._sub_list)
-
-        btn_layout = QHBoxLayout()
-        self._add_btn = QPushButton(self._i18n.get("reader.add_sub"))
-        self._add_btn.clicked.connect(self._on_add_subreddit)
-        self._remove_btn = QPushButton(self._i18n.get("reader.remove_sub"))
-        self._remove_btn.clicked.connect(self._on_remove_subreddit)
-        btn_layout.addWidget(self._add_btn)
-        btn_layout.addWidget(self._remove_btn)
-        panel_layout.addLayout(btn_layout)
-
-        panel.setMaximumWidth(200)
-        return panel
+        layout.addWidget(right_panel)
 
     def _build_right_panel(self) -> QWidget:
         """Build the post list, content panes, and comment tree."""
@@ -141,53 +113,60 @@ class ReaderWidget(QWidget):
         self._post_list.setMaximumHeight(200)
         panel_layout.addWidget(self._post_list)
 
-        # -- Scrollable content: summary + original + comments --
+        # -- Scrollable content: translation + original + comments --
         content_area = QScrollArea()
         content_area.setWidgetResizable(True)
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
 
-        # Summary section
-        self._summary_label = QLabel(self._i18n.get("reader.summary"))
-        self._summary_label.setStyleSheet("font-weight: bold;")
-        content_layout.addWidget(self._summary_label)
+        # Translation section (replaces summary)
+        self._translation_label = QLabel(self._i18n.get("reader.translation"))
+        self._translation_label.setStyleSheet("font-weight: bold;")
+        content_layout.addWidget(self._translation_label)
 
-        self._summary_text = QTextEdit()
-        self._summary_text.setReadOnly(True)
-        self._summary_text.setMaximumHeight(150)
-        self._summary_text.setPlaceholderText("")
-        content_layout.addWidget(self._summary_text)
+        self._translation_text = QTextEdit()
+        self._translation_text.setReadOnly(True)
+        self._translation_text.setMaximumHeight(150)
+        content_layout.addWidget(self._translation_text)
 
-        # Separator
-        sep1 = QFrame()
-        sep1.setFrameShape(QFrame.Shape.HLine)
-        content_layout.addWidget(sep1)
+        # Toggle + action buttons row
+        action_row = QHBoxLayout()
 
-        # Original section
-        self._original_label = QLabel(self._i18n.get("reader.original"))
-        self._original_label.setStyleSheet("font-weight: bold;")
-        content_layout.addWidget(self._original_label)
+        self._toggle_btn = QPushButton(self._i18n.get("reader.toggle_original"))
+        self._toggle_btn.clicked.connect(self._toggle_original_translation)
+        action_row.addWidget(self._toggle_btn)
 
+        self._refresh_btn = QPushButton(self._i18n.get("reader.refresh"))
+        self._refresh_btn.clicked.connect(self._on_refresh_translation)
+        action_row.addWidget(self._refresh_btn)
+
+        action_row.addStretch()
+
+        self._write_comment_btn = QPushButton(self._i18n.get("reader.write_comment"))
+        self._write_comment_btn.clicked.connect(self._on_write_comment)
+        self._write_comment_btn.setEnabled(False)
+        action_row.addWidget(self._write_comment_btn)
+
+        content_layout.addLayout(action_row)
+
+        # Original text (hidden by default)
         self._original_text = QTextEdit()
         self._original_text.setReadOnly(True)
         self._original_text.setMaximumHeight(150)
+        self._original_text.hide()
         content_layout.addWidget(self._original_text)
 
         # Separator
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.Shape.HLine)
-        content_layout.addWidget(sep2)
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        content_layout.addWidget(sep)
 
-        # Comments header with refresh button
+        # Comments header
         comments_header = QHBoxLayout()
         self._comments_label = QLabel(self._i18n.get("reader.comments"))
         self._comments_label.setStyleSheet("font-weight: bold;")
         comments_header.addWidget(self._comments_label)
         comments_header.addStretch()
-
-        self._refresh_btn = QPushButton(self._i18n.get("reader.refresh"))
-        self._refresh_btn.clicked.connect(self._on_refresh_summary)
-        comments_header.addWidget(self._refresh_btn)
         content_layout.addLayout(comments_header)
 
         # Container layout for dynamically-added comment widgets
@@ -203,72 +182,18 @@ class ReaderWidget(QWidget):
         return panel
 
     # ------------------------------------------------------------------
-    # Subreddit management
-    # ------------------------------------------------------------------
-
-    def _load_subreddits(self):
-        """Load subreddit list from config into the list widget."""
-        subs = self._config.get(
-            "reddit.subreddits",
-            ["python", "programming", "learnpython"],
-        )
-        self._sub_list.clear()
-        for sub in subs:
-            self._sub_list.addItem(sub)
-
-    def _save_subreddits(self):
-        """Persist the current subreddit list back to config."""
-        subs = [
-            self._sub_list.item(i).text()
-            for i in range(self._sub_list.count())
-        ]
-        self._config.set("reddit.subreddits", subs)
-        self._config.save()
-
-    def _on_add_subreddit(self):
-        """Prompt user for a new subreddit name, validate, and add."""
-        text, ok = QInputDialog.getText(
-            self,
-            self._i18n.get("reader.add_sub"),
-            self._i18n.get("reader.subreddits") + ":",
-        )
-        if not ok or not text.strip():
-            return
-
-        name = text.strip().lower()
-
-        # Reject duplicates
-        for i in range(self._sub_list.count()):
-            if self._sub_list.item(i).text() == name:
-                return
-
-        self._sub_list.addItem(name)
-        self._save_subreddits()
-
-    def _on_remove_subreddit(self):
-        """Remove the currently-selected subreddit."""
-        current = self._sub_list.currentItem()
-        if current is None:
-            return
-        row = self._sub_list.row(current)
-        self._sub_list.takeItem(row)
-        self._save_subreddits()
-
-    # ------------------------------------------------------------------
     # Post fetching
     # ------------------------------------------------------------------
 
-    def _on_subreddit_selected(self, current: QListWidgetItem, _previous):
-        """Handle subreddit selection change."""
-        if current is None:
-            return
-        self._fetch_posts(current.text())
+    def load_subreddit(self, name: str):
+        """Load posts from a subreddit (called by MainWindow via TopBar signal)."""
+        self._current_subreddit = name
+        self._fetch_posts(name)
 
     def _on_sort_changed(self, _sort_text: str):
         """Re-fetch posts when sort order changes."""
-        current = self._sub_list.currentItem()
-        if current is not None:
-            self._fetch_posts(current.text())
+        if self._current_subreddit:
+            self._fetch_posts(self._current_subreddit)
 
     def _fetch_posts(self, subreddit: str):
         """Start async post fetch via RedditFetchWorker.
@@ -277,16 +202,19 @@ class ReaderWidget(QWidget):
         """
         # Clear right panel state
         self._post_list.clear()
-        self._summary_text.clear()
+        self._translation_text.clear()
         self._original_text.clear()
+        self._write_comment_btn.setEnabled(False)
         self._clear_comments()
         self._current_posts = []
         self._current_post = None
 
-        # Stop any running fetch
-        if self._fetch_worker is not None and self._fetch_worker.isRunning():
-            self._fetch_worker.stop()
-            self._fetch_worker.wait(2000)
+        # Stop ALL running workers (prevents stale results from previous subreddit)
+        for worker in (self._fetch_worker, self._gen_worker, self._title_worker,
+                       self._comment_worker, self._comment_translate_worker):
+            if worker is not None and worker.isRunning():
+                worker.stop()
+                worker.wait(2000)
 
         self._fetch_worker = RedditFetchWorker(self._reader)
         self._fetch_worker.posts_ready.connect(self._on_posts_ready)
@@ -327,25 +255,37 @@ class ReaderWidget(QWidget):
     # ------------------------------------------------------------------
 
     def _start_title_translation(self, posts: list[PostDTO]):
-        """Start async batch title translation."""
+        """Start async batch title translation (coordinator-aware)."""
+        # Silent skip if model not configured
+        if not self._check_model_configured("logic", show_dialog=False):
+            return
+
         if self._title_worker and self._title_worker.isRunning():
             self._title_worker.stop()
             self._title_worker.wait(2000)
 
-        self.activity_started.emit(self._i18n.get("status.reader_titles"))
+        task_id = "reader_title_translate"
 
-        titles = [p.title for p in posts]
-        self._title_worker = GenerationWorker()
-        self._title_worker.finished_signal.connect(self._on_titles_translated)
-        self._title_worker.error_occurred.connect(self._on_title_translate_error)
+        def do_start():
+            self.activity_started.emit(self._i18n.get("status.reader_titles"))
+            titles = [p.title for p in self._current_posts]
+            if not titles:
+                return
+            self._title_worker = GenerationWorker()
+            self._title_worker.finished_signal.connect(self._on_titles_translated)
+            self._title_worker.error_occurred.connect(self._on_title_translate_error)
+            locale = self._config.get("app.locale", "ko_KR")
+            self._title_worker.configure(self._reader.translate_titles, titles, locale=locale)
+            self._title_worker.start()
 
-        locale = self._config.get("app.locale", "ko_KR")
-        self._title_worker.configure(self._reader.translate_titles, titles, locale=locale)
-        self._title_worker.start()
+        if not self._coordinator.request_normal(task_id, do_start):
+            return  # queued, will be called back when exclusive finishes
+        do_start()
 
     def _on_titles_translated(self, full_text: str):
         """Parse numbered translations and update post list items."""
-        self.activity_finished.emit()
+        self._coordinator.finish_normal("reader_title_translate")
+        self.activity_finished.emit(self._i18n.get("status.reader_titles"))
         lines = full_text.strip().split("\n")
         for line in lines:
             line = line.strip()
@@ -367,15 +307,16 @@ class ReaderWidget(QWidget):
 
     def _on_title_translate_error(self, error_key: str):
         """Title translation failed - just log, posts still show English titles."""
-        self.activity_finished.emit()
+        self._coordinator.finish_normal("reader_title_translate")
+        self.activity_finished.emit(self._i18n.get("status.reader_titles"))
         logger.warning(f"Title translation failed: {error_key}")
 
     # ------------------------------------------------------------------
-    # Post selection -> summary + original + comments
+    # Post selection -> translation + original + comments
     # ------------------------------------------------------------------
 
     def _on_post_selected(self, row: int):
-        """Handle post list selection. Loads original, summary, and comments."""
+        """Handle post list selection. Loads translation, original, and comments."""
         if row < 0 or row >= len(self._current_posts):
             return
 
@@ -384,70 +325,137 @@ class ReaderWidget(QWidget):
 
         # Original body
         self._original_text.setPlainText(post.selftext or "")
+        self._showing_original = False
+        self._original_text.hide()
+        self._toggle_btn.setText(self._i18n.get("reader.toggle_original"))
 
-        # Summary: check cache first
+        # Enable write comment button
+        self._write_comment_btn.setEnabled(True)
+
+        # Translation: check cache first
         locale = self._config.get("app.locale", "ko_KR")
-        cached = self._reader.get_summary(post.id, locale=locale)
+        cached = self._reader.get_translation(post.id, locale=locale)
         if cached:
-            self._summary_text.setPlainText(cached)
+            self._translation_text.setPlainText(cached)
+        elif locale == "ko_KR" and post.selftext:
+            self._generate_translation(post)
         else:
-            self._generate_summary(post)
+            # English locale or no body - just show original
+            self._translation_text.setPlainText(post.selftext or post.title)
 
         # Comments (separate async request)
         self._fetch_comments(post.id, post.subreddit)
 
     # ------------------------------------------------------------------
-    # Summary generation (streaming)
+    # Translation generation (streaming)
     # ------------------------------------------------------------------
 
-    def _generate_summary(self, post: PostDTO):
-        """Start async summary generation via GenerationWorker."""
-        # Stop any running generation
+    def _check_model_configured(self, role: str, show_dialog: bool = True) -> bool:
+        """Check if a model role is configured.
+
+        Args:
+            role: Model role key ("logic", "persona", "summary")
+            show_dialog: If True, show navigation dialog. If False, just log warning.
+
+        Returns True if model is configured.
+        """
+        missing = self._config.get_missing_models([role])
+        if not missing:
+            return True
+
+        if show_dialog:
+            role_names = {
+                "logic": self._i18n.get("settings.model_role_logic"),
+                "persona": self._i18n.get("settings.model_role_persona"),
+            }
+            role_name = role_names.get(role, role)
+
+            msg = QMessageBox(self)
+            msg.setWindowTitle(self._i18n.get("errors.model_not_configured"))
+            msg.setText(self._i18n.get("errors.model_not_configured_detail").replace("{models}", role_name))
+            msg.setIcon(QMessageBox.Icon.Warning)
+
+            settings_btn = msg.addButton(
+                self._i18n.get("errors.go_to_settings"),
+                QMessageBox.ButtonRole.AcceptRole,
+            )
+            msg.addButton(QMessageBox.StandardButton.Cancel)
+            msg.exec()
+
+            if msg.clickedButton() == settings_btn:
+                self.navigate_to_settings.emit()
+        else:
+            logger.warning(f"Model not configured for role: {role}, skipping operation")
+
+        return False
+
+    def _generate_translation(self, post: PostDTO):
+        """Start async post body translation via GenerationWorker."""
         if self._gen_worker is not None and self._gen_worker.isRunning():
             self._gen_worker.stop()
             self._gen_worker.wait(2000)
 
-        self._summary_text.clear()
-        self._summary_text.setPlaceholderText(self._i18n.get("reader.generating"))
-        self._start_loading_animation(self._summary_text)
-        self.activity_started.emit(self._i18n.get("status.reader_summary"))
+        if not self._check_model_configured("logic", show_dialog=True):
+            return
 
-        self._gen_worker = GenerationWorker()
-        self._gen_worker.token_received.connect(self._on_summary_token)
-        self._gen_worker.finished_signal.connect(self._on_summary_finished)
-        self._gen_worker.error_occurred.connect(self._on_gen_error)
+        task_id = "reader_translation"
+        self._translation_text.clear()
+        self._translation_text.setPlaceholderText(self._i18n.get("reader.translating"))
 
-        locale = self._config.get("app.locale", "ko_KR")
-        self._gen_worker.configure(self._reader.generate_summary, post, locale=locale)
-        self._gen_worker.start()
+        def do_start():
+            self._start_loading_animation(self._translation_text)
+            self.activity_started.emit(self._i18n.get("status.reader_translation"))
+            self._gen_worker = GenerationWorker()
+            self._gen_worker.token_received.connect(self._on_translation_token)
+            self._gen_worker.finished_signal.connect(self._on_translation_finished)
+            self._gen_worker.error_occurred.connect(self._on_translation_error)
+            locale = self._config.get("app.locale", "ko_KR")
+            self._gen_worker.configure(self._reader.generate_translation, post, locale=locale)
+            self._gen_worker.start()
 
-    def _on_summary_token(self, token: str):
-        """Append a streamed token to the summary text edit."""
+        if not self._coordinator.request_normal(task_id, do_start):
+            return
+        do_start()
+
+    def _on_translation_token(self, token: str):
+        """Append a streamed token to the translation text edit."""
         self._stop_loading_animation()
-        self._summary_text.setPlaceholderText("")
-        cursor = self._summary_text.textCursor()
+        self._translation_text.setPlaceholderText("")
+        cursor = self._translation_text.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)
         cursor.insertText(token)
 
-    def _on_summary_finished(self, full_text: str):
-        """Replace streaming text with final complete summary."""
-        self._summary_text.setPlainText(full_text)
-        self.activity_finished.emit()
+    def _on_translation_finished(self, full_text: str):
+        """Replace streaming text with final complete translation."""
+        self._coordinator.finish_normal("reader_translation")
+        self._translation_text.setPlainText(full_text)
+        self.activity_finished.emit(self._i18n.get("status.reader_translation"))
 
-    def _on_gen_error(self, error_key: str):
-        """Show localized error when summary generation fails."""
+    def _on_translation_error(self, error_key: str):
+        """Show localized error when translation fails."""
+        self._coordinator.finish_normal("reader_translation")
         self._stop_loading_animation()
-        self.activity_finished.emit()
-        self._summary_text.setPlaceholderText("")
-        self._summary_text.setPlainText(self._i18n.get(error_key))
+        self.activity_finished.emit(self._i18n.get("status.reader_translation"))
+        self._translation_text.setPlaceholderText("")
+        self._translation_text.setPlainText(self._i18n.get(error_key))
 
-    def _on_refresh_summary(self):
-        """Delete cached summary and regenerate."""
+    def _on_refresh_translation(self):
+        """Delete cached translation and regenerate."""
         if self._current_post is None:
             return
         locale = self._config.get("app.locale", "ko_KR")
-        self._reader.delete_summary(self._current_post.id, locale=locale)
-        self._generate_summary(self._current_post)
+        self._reader.delete_translation(self._current_post.id, locale=locale)
+        self._generate_translation(self._current_post)
+
+    def _toggle_original_translation(self):
+        """Toggle between showing original text and translation."""
+        self._showing_original = not self._showing_original
+        if self._showing_original:
+            self._original_text.show()
+            self._toggle_btn.setText(self._i18n.get("reader.toggle_translation"))
+        else:
+            self._original_text.hide()
+            self._toggle_btn.setText(self._i18n.get("reader.toggle_original"))
 
     # ------------------------------------------------------------------
     # Comment fetching and rendering
@@ -469,15 +477,45 @@ class ReaderWidget(QWidget):
         self._comment_worker.start()
 
     def _on_comments_ready(self, comments: list):
-        """Render comment tree and auto-translate first batch."""
+        """Store comments and render first batch with lazy loading."""
         self._clear_comments()
         self._comments_list = comments
+        self._rendered_comment_count = 0
         self._translated_comment_count = 0
-        for comment in comments:
+        # Render first batch
+        self._render_next_batch()
+
+    def _render_next_batch(self):
+        """Render next COMMENTS_RENDER_BATCH top-level comments + auto-translate."""
+        start = self._rendered_comment_count
+        end = min(start + COMMENTS_RENDER_BATCH, len(self._comments_list))
+
+        if start >= len(self._comments_list):
+            return
+
+        # Remove "..." indicator if it exists
+        if hasattr(self, '_more_indicator') and self._more_indicator is not None:
+            self._more_indicator.deleteLater()
+            self._more_indicator = None
+
+        for i in range(start, end):
+            comment = self._comments_list[i]
             self._add_comment_widget(comment, self._comments_area, depth=0)
-        # Auto-translate first batch
+
+        self._rendered_comment_count = end
+
+        # Add "..." indicator if more comments available
+        if end < len(self._comments_list):
+            self._more_indicator = QLabel("···")
+            self._more_indicator.setStyleSheet("color: #888; font-size: 18px; padding: 8px;")
+            self._more_indicator.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._comments_area.addWidget(self._more_indicator)
+        else:
+            self._more_indicator = None
+
+        # Auto-translate the rendered batch
         locale = self._config.get("app.locale", "ko_KR")
-        if locale == "ko_KR" and comments:
+        if locale == "ko_KR":
             self._translate_next_comments_batch()
 
     def _add_comment_widget(
@@ -486,7 +524,7 @@ class ReaderWidget(QWidget):
         parent_layout: QVBoxLayout,
         depth: int,
     ):
-        """Recursively add a comment frame with indentation.
+        """Add a comment frame with optional reply button and child translate buttons.
 
         Rendering is capped at MAX_COMMENT_DEPTH (spec 7.2).
 
@@ -506,7 +544,6 @@ class ReaderWidget(QWidget):
         self._comment_widgets[comment.id] = frame
 
         if comment.more_count > 0:
-            # "N more comments" placeholder (non-interactive in v1.0)
             more_label = QLabel(
                 self._i18n.get("reader.more_comments", count=str(comment.more_count))
             )
@@ -514,8 +551,29 @@ class ReaderWidget(QWidget):
             more_label.setEnabled(False)
             frame_layout.addWidget(more_label)
         else:
+            header_layout = QHBoxLayout()
             header = QLabel(f"<b>{comment.author}</b>  \u2191{comment.score}")
-            frame_layout.addWidget(header)
+            header_layout.addWidget(header)
+            header_layout.addStretch()
+
+            # Reply button for all comments
+            reply_btn = QPushButton(self._i18n.get("reader.write_reply"))
+            reply_btn.setFixedHeight(24)
+            reply_btn.setStyleSheet("font-size: 11px; padding: 2px 8px;")
+            reply_btn.clicked.connect(lambda checked, c=comment: self._on_write_reply(c))
+            header_layout.addWidget(reply_btn)
+
+            # Translate button for child comments (depth > 0)
+            if depth > 0:
+                translate_btn = QPushButton(self._i18n.get("reader.translate_comment_btn"))
+                translate_btn.setFixedHeight(24)
+                translate_btn.setStyleSheet("font-size: 11px; padding: 2px 8px;")
+                translate_btn.clicked.connect(
+                    lambda checked, c=comment, btn=translate_btn: self._on_translate_single_comment(c, btn)
+                )
+                header_layout.addWidget(translate_btn)
+
+            frame_layout.addLayout(header_layout)
 
             body = QLabel(comment.body)
             body.setWordWrap(True)
@@ -523,7 +581,6 @@ class ReaderWidget(QWidget):
 
         parent_layout.addWidget(frame)
 
-        # Recurse into child comments
         for child in comment.children:
             self._add_comment_widget(child, parent_layout, depth + 1)
 
@@ -541,10 +598,14 @@ class ReaderWidget(QWidget):
     # ------------------------------------------------------------------
 
     def _translate_next_comments_batch(self):
-        """Translate the next batch of comments."""
+        """Translate the next batch of comments (coordinator-aware)."""
+        # Silent skip if model not configured
+        if not self._check_model_configured("logic", show_dialog=False):
+            return
+
         # Collect untranslated top-level comment bodies
         start = self._translated_comment_count
-        end = min(start + COMMENTS_TRANSLATE_BATCH, len(self._comments_list))
+        end = min(start + COMMENTS_RENDER_BATCH, len(self._comments_list))
 
         if start >= len(self._comments_list):
             return
@@ -556,44 +617,50 @@ class ReaderWidget(QWidget):
             self._translated_comment_count = end
             return
 
-        self.activity_started.emit(self._i18n.get("status.reader_comments"))
+        task_id = "reader_comment_translate"
 
-        # Batch translate using a combined prompt
-        combined = "\n---\n".join(f"[{i+1}] {b}" for i, b in enumerate(bodies))
-        prompt_text = (
-            f"Translate each numbered Reddit comment below to Korean.\n"
-            f"\n"
-            f"Rules:\n"
-            f"- Keep the same numbering [1] [2] [3]...\n"
-            f"- Preserve tone and style\n"
-            f"- Output ONLY the numbered translations\n"
-            f"\n"
-            f"{combined}"
-        )
+        def do_start():
+            self.activity_started.emit(self._i18n.get("status.reader_comments"))
 
-        if self._comment_translate_worker and self._comment_translate_worker.isRunning():
-            self._comment_translate_worker.stop()
-            self._comment_translate_worker.wait(2000)
+            # Batch translate using a combined prompt
+            combined = "\n---\n".join(f"[{i+1}] {b}" for i, b in enumerate(bodies))
+            prompt_text = (
+                f"Translate each numbered Reddit comment below to Korean.\n"
+                f"\n"
+                f"Rules:\n"
+                f"- Keep the same numbering [1] [2] [3]...\n"
+                f"- Preserve tone and style\n"
+                f"- Output ONLY the numbered translations\n"
+                f"\n"
+                f"{combined}"
+            )
 
-        self._comment_translate_worker = GenerationWorker()
-        self._comment_translate_worker.finished_signal.connect(
-            lambda text: self._on_comments_translated(text, start, end)
-        )
-        self._comment_translate_worker.error_occurred.connect(self._on_comment_translate_error)
+            if self._comment_translate_worker and self._comment_translate_worker.isRunning():
+                self._comment_translate_worker.stop()
+                self._comment_translate_worker.wait(2000)
 
-        locale = self._config.get("app.locale", "ko_KR")
-        # Use LLM directly via the reader's translate method pattern
-        self._comment_translate_worker.configure(
-            self._reader._llm.generate,
-            prompt=prompt_text,
-            model="llama3.1:8b",
-            num_ctx=8192,
-        )
-        self._comment_translate_worker.start()
+            self._comment_translate_worker = GenerationWorker()
+            self._comment_translate_worker.finished_signal.connect(
+                lambda text: self._on_comments_translated(text, start, end)
+            )
+            self._comment_translate_worker.error_occurred.connect(self._on_comment_translate_error)
+
+            self._comment_translate_worker.configure(
+                self._reader._llm.generate,
+                prompt=prompt_text,
+                model=self._config.get("llm.models.logic.name", ""),
+                num_ctx=8192,
+            )
+            self._comment_translate_worker.start()
+
+        if not self._coordinator.request_normal(task_id, do_start):
+            return  # queued
+        do_start()
 
     def _on_comments_translated(self, full_text: str, start: int, end: int):
         """Parse translated comments and add translation labels to comment widgets."""
-        self.activity_finished.emit()
+        self._coordinator.finish_normal("reader_comment_translate")
+        self.activity_finished.emit(self._i18n.get("status.reader_comments"))
         self._translated_comment_count = end
 
         # Parse translations by [N] markers
@@ -657,24 +724,97 @@ class ReaderWidget(QWidget):
 
     def _on_comment_translate_error(self, error_key: str):
         """Comment translation failed - just log."""
-        self.activity_finished.emit()
+        self._coordinator.finish_normal("reader_comment_translate")
+        self.activity_finished.emit(self._i18n.get("status.reader_comments"))
         logger.warning(f"Comment translation failed: {error_key}")
+
+    # ------------------------------------------------------------------
+    # Single comment translation (on-demand for child comments)
+    # ------------------------------------------------------------------
+
+    def _on_translate_single_comment(self, comment: CommentDTO, btn: QPushButton):
+        """Translate a single child comment on demand."""
+        if not self._check_model_configured("logic", show_dialog=False):
+            return
+        btn.setEnabled(False)
+        btn.setText("...")
+
+        worker = GenerationWorker()
+        locale = self._config.get("app.locale", "ko_KR")
+        worker.configure(self._reader.translate_comment, comment.body, locale=locale)
+        worker.finished_signal.connect(
+            lambda text, cid=comment.id, b=btn: self._on_single_comment_translated(cid, text, b)
+        )
+        worker.error_occurred.connect(
+            lambda err, b=btn: self._on_single_comment_translate_error(b)
+        )
+        worker.start()
+        # Keep reference to prevent GC
+        btn._translate_worker = worker
+
+    def _on_single_comment_translated(self, comment_id: str, text: str, btn: QPushButton):
+        """Handle single comment translation completion."""
+        btn.hide()
+        self._add_translation_to_comment(comment_id, text)
+
+    def _on_single_comment_translate_error(self, btn: QPushButton):
+        """Handle single comment translation error."""
+        btn.setEnabled(True)
+        btn.setText(self._i18n.get("reader.translate_comment_btn"))
+
+    # ------------------------------------------------------------------
+    # Write comment / reply handlers
+    # ------------------------------------------------------------------
+
+    def _on_write_comment(self):
+        """Handle 'Write Comment' button click."""
+        if self._current_post is None:
+            return
+        ctx = WriterContext(
+            mode="comment",
+            subreddit=self._current_post.subreddit,
+            post_title=self._current_post.title,
+            post_permalink=self._current_post.permalink,
+            post_selftext=self._current_post.selftext,
+        )
+        self.write_requested.emit(ctx)
+
+    def _on_write_reply(self, comment: CommentDTO):
+        """Handle 'Reply' button click on a comment."""
+        if self._current_post is None:
+            return
+        # Build parent thread (simplified - just this comment for now)
+        parent_thread = [{
+            "author": comment.author,
+            "body": comment.body,
+            "score": comment.score,
+        }]
+        ctx = WriterContext(
+            mode="reply",
+            subreddit=self._current_post.subreddit,
+            post_title=self._current_post.title,
+            post_permalink=self._current_post.permalink,
+            post_selftext=self._current_post.selftext,
+            comment_id=comment.id,
+            comment_body=comment.body,
+            comment_author=comment.author,
+            parent_thread=parent_thread,
+        )
+        self.write_requested.emit(ctx)
 
     # ------------------------------------------------------------------
     # Scroll-based lazy loading
     # ------------------------------------------------------------------
 
     def _on_content_scroll(self, value: int):
-        """Detect when user scrolls near bottom and translate more comments."""
+        """Detect when user scrolls near bottom and render+translate more comments."""
         scrollbar = self._content_scroll.verticalScrollBar()
         if scrollbar.maximum() == 0:
             return
-        # If scrolled past 80% of content
         if value > scrollbar.maximum() * 0.8:
-            if self._translated_comment_count < len(self._comments_list):
-                # Only translate if no translation is currently running
+            if self._rendered_comment_count < len(self._comments_list):
                 if not (self._comment_translate_worker and self._comment_translate_worker.isRunning()):
-                    self._translate_next_comments_batch()
+                    self._render_next_batch()
 
     # ------------------------------------------------------------------
     # Loading animation
@@ -698,7 +838,7 @@ class ReaderWidget(QWidget):
             return
         self._anim_dot_count = (self._anim_dot_count + 1) % 4
         dots = "." * self._anim_dot_count
-        base = self._i18n.get("reader.generating").rstrip(".")
+        base = self._i18n.get("reader.translating").rstrip(".")
         self._anim_target.setPlaceholderText(f"{base}{dots}")
 
     # ------------------------------------------------------------------
@@ -710,11 +850,12 @@ class ReaderWidget(QWidget):
 
         Called by MainWindow.retranslate_ui() after I18nManager.load_locale().
         """
-        self._sub_label.setText(self._i18n.get("reader.subreddits"))
         self._posts_label.setText(self._i18n.get("reader.posts"))
-        self._summary_label.setText(self._i18n.get("reader.summary"))
-        self._original_label.setText(self._i18n.get("reader.original"))
+        self._translation_label.setText(self._i18n.get("reader.translation"))
         self._comments_label.setText(self._i18n.get("reader.comments"))
         self._refresh_btn.setText(self._i18n.get("reader.refresh"))
-        self._add_btn.setText(self._i18n.get("reader.add_sub"))
-        self._remove_btn.setText(self._i18n.get("reader.remove_sub"))
+        self._toggle_btn.setText(
+            self._i18n.get("reader.toggle_translation") if self._showing_original
+            else self._i18n.get("reader.toggle_original")
+        )
+        self._write_comment_btn.setText(self._i18n.get("reader.write_comment"))

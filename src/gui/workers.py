@@ -183,3 +183,54 @@ class GenerationWorker(QThread):
         if isinstance(error, LLMTimeoutError):
             return "errors.llm_timeout"
         return "errors.ollama_not_running"
+
+
+class ModelFetchWorker(QThread):
+    """Background worker for fetching available Ollama models.
+
+    Prevents UI freeze when querying the Ollama API for installed models.
+    """
+    models_ready = pyqtSignal(list)      # list[dict] with name and size
+    error_occurred = pyqtSignal(str)     # error message
+
+    def __init__(self, ollama_adapter, parent=None):
+        super().__init__(parent)
+        self._adapter = ollama_adapter
+
+    def run(self):
+        """Fetch model list with sizes from Ollama."""
+        try:
+            models = self._adapter.list_models_with_size()
+            self.models_ready.emit(models)
+        except Exception as e:
+            logger.error(f"Failed to fetch models: {e}")
+            self.error_occurred.emit(str(e))
+
+
+class SubredditValidationWorker(QThread):
+    """Background worker for validating subreddit existence.
+
+    Prevents UI freeze when checking subreddit via Reddit API.
+    """
+    validation_success = pyqtSignal(str)       # subreddit name
+    validation_error = pyqtSignal(str, str)    # subreddit name, error i18n key
+
+    def __init__(self, reddit_adapter, name: str, parent=None):
+        super().__init__(parent)
+        self._adapter = reddit_adapter
+        self._name = name
+
+    def run(self):
+        """Validate subreddit exists via Reddit API."""
+        try:
+            self._adapter.validate_subreddit(self._name)
+            self.validation_success.emit(self._name)
+        except Exception as e:
+            from src.core.exceptions import SubredditNotFoundError, SubredditPrivateError
+            if isinstance(e, SubredditNotFoundError):
+                self.validation_error.emit(self._name, "errors.subreddit_not_found")
+            elif isinstance(e, SubredditPrivateError):
+                self.validation_error.emit(self._name, "errors.subreddit_private")
+            else:
+                self.validation_error.emit(self._name, "topbar.validation_failed")
+            logger.warning(f"Subreddit validation failed for '{self._name}': {e}")

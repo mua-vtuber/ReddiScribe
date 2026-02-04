@@ -90,7 +90,7 @@ class TestConfigManagerGetSet:
 
     def test_get_nested_key(self):
         cm = self._make_cm()
-        assert cm.get("llm.models.logic.name") == "gemma2:9b"
+        assert cm.get("llm.models.logic.name") == ""
 
     def test_get_missing_key_returns_default(self):
         cm = self._make_cm()
@@ -154,6 +154,44 @@ class TestConfigManagerValidation:
         cm = self._make_cm(tmp_dir)
         cm.update({"llm.providers.ollama.timeout": 10})
         assert cm.get("llm.providers.ollama.timeout") == 30
+
+
+class TestConfigManagerGetMissingModels:
+    """Test get_missing_models method."""
+
+    def _make_cm(self):
+        ConfigManager.reset()
+        cm = ConfigManager.__new__(ConfigManager)
+        cm._initialized = True
+        cm._config = ConfigManager._deep_copy(DEFAULT_CONFIG)
+        cm._instance_lock = __import__('threading').RLock()
+        cm.PROJECT_ROOT = Path(".")
+        cm.CONFIG_PATH = Path("./config/settings.yaml")
+        ConfigManager._instance = cm
+        return cm
+
+    def test_all_missing_with_defaults(self):
+        cm = self._make_cm()
+        missing = cm.get_missing_models(["logic", "persona", "summary"])
+        assert missing == ["logic", "persona", "summary"]
+
+    def test_none_missing_when_set(self):
+        cm = self._make_cm()
+        cm.set("llm.models.logic.name", "gemma2:9b")
+        cm.set("llm.models.persona.name", "llama3.1:70b")
+        cm.set("llm.models.summary.name", "llama3.1:8b")
+        missing = cm.get_missing_models(["logic", "persona", "summary"])
+        assert missing == []
+
+    def test_partial_missing(self):
+        cm = self._make_cm()
+        cm.set("llm.models.logic.name", "gemma2:9b")
+        missing = cm.get_missing_models(["logic", "persona"])
+        assert missing == ["persona"]
+
+    def test_empty_roles_list(self):
+        cm = self._make_cm()
+        assert cm.get_missing_models([]) == []
 
 
 class TestConfigManagerDbPath:
