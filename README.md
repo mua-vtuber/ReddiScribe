@@ -1,3 +1,5 @@
+**[한국어](README.ko.md)** | English
+
 # ReddiScribe
 
 A PyQt6 desktop application for Korean users to browse Reddit with AI-powered Korean translations and write Reddit-ready English posts. Built with local Ollama LLM (no cloud API, no API keys required).
