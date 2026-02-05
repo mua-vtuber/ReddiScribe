@@ -160,19 +160,22 @@ class WriterService:
             )
 
         system_prompt = (
-            f"Create a polished {target_lang} translation from the draft, then explain.\n\n"
             f"Original ({source_lang}): {source_text}\n"
-            f"Draft translation: {draft}\n"
+            f"Draft: {draft}\n"
             f"{context_info}\n"
-            "RULES:\n"
+            "TASK: Polish the draft translation, then explain.\n\n"
+            "STRICT RULES:\n"
             "- Do NOT add words/facts not in the original\n"
             "- Keep meaning intact, only improve expression\n"
-            f"- Translation must be {target_lang} ONLY (no other languages mixed in)\n\n"
-            "OUTPUT FORMAT (strict):\n"
-            "1. Write ONLY the translation first (no intro, no labels)\n"
-            "2. Then write %%% on a new line\n"
-            f"3. IMPORTANT: Write explanation in {comment_lang} ONLY, 2-3 sentences, speak as author\n\n"
-            "For follow-up requests, same format: translation + %%% + explanation."
+            f"- Translation must be {target_lang} ONLY\n"
+            "- Preserve emoticons but convert to target language (e.g. ㅋㅋㅋ→lol, ㅠㅠ→T_T)\n\n"
+            "OUTPUT FORMAT - FOLLOW EXACTLY:\n"
+            "- Start with the translation DIRECTLY (no 'Here is', no labels, no intro)\n"
+            "- Then %%% on a new line\n"
+            f"- Then explanation in {comment_lang}, 2-3 sentences\n\n"
+            "WRONG: 'Here is the translation: Hello'\n"
+            "CORRECT: 'Hello'\n\n"
+            "For follow-up: same format (translation + %%% + explanation)"
         )
         return [{"role": "system", "content": system_prompt}]
 

@@ -243,9 +243,16 @@ class WriterWidget(QWidget):
 
     def _on_translate(self):
         """Start translation pipeline. Handles conflict if polish is running."""
-        korean_text = self._input.toPlainText().strip()
-        if not korean_text:
+        body_text = self._input.toPlainText().strip()
+        if not body_text:
             return
+
+        # Include title if in new_post mode
+        source_text = body_text
+        if (self._current_context and self._current_context.mode == "new_post"
+                and self._title_input.text().strip()):
+            title = self._title_input.text().strip()
+            source_text = f"Title: {title}\n\n{body_text}"
 
         # Check if required models are configured
         roles = ["logic"] if self._draft_only_cb.isChecked() else ["logic", "persona"]
@@ -254,12 +261,12 @@ class WriterWidget(QWidget):
 
         # Check if polish (exclusive) is currently running
         if self._coordinator.is_exclusive_active():
-            self._show_polish_conflict_dialog(korean_text)
+            self._show_polish_conflict_dialog(source_text)
             return
 
-        self._start_translation_pipeline(korean_text)
+        self._start_translation_pipeline(source_text)
 
-    def _show_polish_conflict_dialog(self, korean_text: str):
+    def _show_polish_conflict_dialog(self, source_text: str):
         """Show dialog when user tries to translate while polish is running."""
         msg = QMessageBox(self)
         msg.setWindowTitle(self._i18n.get("writer.polish_in_progress_title"))
@@ -280,10 +287,10 @@ class WriterWidget(QWidget):
         if msg.clickedButton() == cancel_btn:
             # Cancel current polish, start new pipeline
             self._on_stop()  # stops workers + calls _on_all_done which finishes exclusive
-            self._start_translation_pipeline(korean_text)
+            self._start_translation_pipeline(source_text)
         elif msg.clickedButton() == wait_btn:
             # Queue the new translation for after polish finishes
-            self._pending_translate_text = korean_text
+            self._pending_translate_text = source_text
             self._coordinator.exclusive_finished.connect(self._on_exclusive_done_start_queued)
 
     def _on_exclusive_done_start_queued(self):
@@ -294,13 +301,13 @@ class WriterWidget(QWidget):
             self._pending_translate_text = None
             self._start_translation_pipeline(text)
 
-    def _start_translation_pipeline(self, korean_text: str):
-        """Start the full translation pipeline (draft + optional polish)."""
+    def _start_translation_pipeline(self, source_text: str):
+        """Start the full translation pipeline (draft + refine)."""
         # Reset outputs
         self._draft_output.clear()
         self._final_output.clear()
         self._draft_text = ""
-        self._source_input_text = korean_text
+        self._source_input_text = source_text
         self._refine_messages = []
         self._pending_translation = None
         self._apply_btn.setEnabled(False)
@@ -316,10 +323,10 @@ class WriterWidget(QWidget):
         self.activity_started.emit(self._current_activity_name)
 
         # Start Stage 1
-        self._start_draft(korean_text)
+        self._start_draft(source_text)
 
-    def _start_draft(self, korean_text: str):
-        """Stage 1: Korean -> English draft."""
+    def _start_draft(self, source_text: str):
+        """Stage 1: Source language -> target language draft."""
         if self._draft_worker and self._draft_worker.isRunning():
             self._draft_worker.stop()
             self._draft_worker.wait(2000)
@@ -328,7 +335,7 @@ class WriterWidget(QWidget):
         self._draft_worker.token_received.connect(self._on_draft_token)
         self._draft_worker.finished_signal.connect(self._on_draft_finished)
         self._draft_worker.error_occurred.connect(self._on_error)
-        self._draft_worker.configure(self._writer.draft, korean_text)
+        self._draft_worker.configure(self._writer.draft, source_text)
         self._start_loading_animation(self._draft_output)
         self._draft_worker.start()
 
