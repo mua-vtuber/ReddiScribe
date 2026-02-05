@@ -44,12 +44,12 @@ class WriterService:
         self._llm = llm
         self._config = config
 
-    def draft(self, korean_text: str, target_lang: str = "English", stream: bool = True) -> Iterator[str]:
-        """Stage 1: Korean -> target language draft using logic model.
+    def draft(self, source_text: str, target_lang: str = None, stream: bool = True) -> Iterator[str]:
+        """Stage 1: Source language -> target language draft using logic model.
 
         Args:
-            korean_text: Input Korean text
-            target_lang: Target language name (e.g. "English", "Korean")
+            source_text: Input text in source language
+            target_lang: Target language name (uses config if not specified)
             stream: Whether to stream tokens
 
         Yields:
@@ -58,7 +58,9 @@ class WriterService:
         Raises:
             OllamaNotRunningError, ModelNotFoundError, LLMTimeoutError
         """
-        prompt = self._build_draft_prompt(korean_text, target_lang)
+        if target_lang is None:
+            target_lang = self._config.get("translation.target_lang", "English")
+        prompt = self._build_draft_prompt(source_text, target_lang)
 
         yield from self._llm.generate(
             prompt=prompt,
@@ -68,11 +70,15 @@ class WriterService:
             stream=stream,
         )
 
-    def polish(self, english_draft: str, context: WriterContext = None, stream: bool = True) -> Iterator[str]:
+    def polish(
+        self, english_draft: str, korean_text: str = "",
+        context: WriterContext = None, stream: bool = True
+    ) -> Iterator[str]:
         """Stage 2: English draft -> Reddit-ready English using persona model.
 
         Args:
             english_draft: Stage 1 output (English draft)
+            korean_text: Original Korean input for nuance reference
             context: Optional context about the writing mode (comment/reply)
             stream: Whether to stream tokens
 
@@ -101,14 +107,19 @@ class WriterService:
                 "Adjust the tone to be appropriate for a reply to this specific comment.\n"
             )
 
+        # Build the prompt with fixed system rules + user persona
         full_prompt = (
-            "The following style instructions may be in any language, "
-            "but you MUST always output in English.\n\n"
+            "Create a polished translation by preserving the original's feel "
+            "while referencing the draft translation.\n\n"
+            "ABSOLUTE RULES:\n"
+            "- Do NOT add words that are not in the original\n"
+            "- Do NOT add facts or information\n"
+            "- Keep the meaning intact, only change the expression\n\n"
             f"Style instructions:\n{persona_prompt}\n"
             f"{context_instructions}\n"
-            f"Original English:\n{english_draft}\n\n"
-            "Rewrite the above text following the style instructions. "
-            "Output ONLY in English."
+            f"Original (Korean):\n{korean_text}\n\n"
+            f"Draft translation (English):\n{english_draft}\n\n"
+            "Output the polished translation in English ONLY."
         )
 
         yield from self._llm.generate(
@@ -120,22 +131,24 @@ class WriterService:
         )
 
     def build_refine_context(
-        self, korean_text: str, draft: str, polished: str,
+        self, source_text: str, draft: str,
         comment_lang: str = "Korean",
         context: WriterContext = None,
     ) -> list[dict]:
         """Build initial chat context for refine conversation.
 
         Args:
-            korean_text: Original Korean input
+            source_text: Original input in source language
             draft: Stage 1 draft output
-            polished: Stage 2 polished output
             comment_lang: Language for AI comments (e.g. "Korean", "English")
             context: Optional context about the writing mode (comment/reply)
 
         Returns:
             List of message dicts with system prompt containing translation context.
         """
+        source_lang = self._config.get("translation.source_lang", "Korean")
+        target_lang = self._config.get("translation.target_lang", "English")
+
         context_info = ""
         if context and context.mode == "comment":
             context_info = (
@@ -147,22 +160,19 @@ class WriterService:
             )
 
         system_prompt = (
-            "You are a translation refinement assistant. "
-            "The user translated Korean text to English.\n\n"
-            f"Context:\n"
-            f"- Original Korean: {korean_text}\n"
-            f"- Stage 1 Draft: {draft}\n"
-            f"- Stage 2 Final: {polished}\n"
+            f"Create a polished {target_lang} translation from the draft, then explain.\n\n"
+            f"Original ({source_lang}): {source_text}\n"
+            f"Draft translation: {draft}\n"
             f"{context_info}\n"
-            "Your role:\n"
-            "- Help the user refine the English translation through conversation\n"
-            "- The user may write in any language - understand their feedback "
-            "and apply it to the English translation\n"
-            "- When you suggest a revised translation, "
-            "wrap it in [TRANSLATION]...[/TRANSLATION] tags\n"
-            "- Keep your comments concise and helpful\n"
-            f"- ALWAYS write your comments and explanations in {comment_lang}\n"
-            "- Output translations always in English inside the tags"
+            "RULES:\n"
+            "- Do NOT add words/facts not in the original\n"
+            "- Keep meaning intact, only improve expression\n"
+            f"- Translation must be {target_lang} ONLY (no other languages mixed in)\n\n"
+            "OUTPUT FORMAT (strict):\n"
+            "1. Write ONLY the translation first (no intro, no labels)\n"
+            "2. Then write %%% on a new line\n"
+            f"3. IMPORTANT: Write explanation in {comment_lang} ONLY, 2-3 sentences, speak as author\n\n"
+            "For follow-up requests, same format: translation + %%% + explanation."
         )
         return [{"role": "system", "content": system_prompt}]
 
@@ -190,7 +200,7 @@ class WriterService:
         )
 
     @staticmethod
-    def _build_draft_prompt(korean_text: str, target_lang: str = "English") -> str:
+    def _build_draft_prompt(source_text: str, target_lang: str = "English") -> str:
         """Build the drafting (literal translation) prompt."""
         return (
             f"Translate to natural {target_lang}. Match the original tone exactly.\n"
@@ -205,13 +215,9 @@ class WriterService:
             "Translation rules:\n"
             "- Keep action verbs exact\n"
             "- Don't add or omit ANY details\n"
-            "- Replace Korean emoticons with English equivalents "
+            "- Convert emoticons to target language equivalents "
             "(e.g. ㅋㅋㅋ→lol, ㅎㅎ→haha, ㅠㅠ→T_T, ㄷㄷ→whoa)\n"
             "\n"
-            "Example:\n"
-            "Korean: 번역해서 레딧을 보고 있어요\n"
-            "English: I'm checking out Reddit (by translating)\n"
-            "\n"
-            f"Korean: {korean_text}\n"
+            f"Text to translate:\n{source_text}\n\n"
             f"{target_lang}:"
         )

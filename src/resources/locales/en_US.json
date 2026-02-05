@@ -79,6 +79,10 @@
   "settings": {
     "advanced_group": "Advanced",
     "app_group": "Application",
+    "translation_group": "Translation Languages",
+    "source_lang_label": "Writer Input Language",
+    "target_lang_label": "Writer Output Language",
+    "reader_lang_label": "Reader Translation Language",
     "header": "Settings",
     "host_label": "Ollama Host",
     "interval_label": "Request Interval (sec)",

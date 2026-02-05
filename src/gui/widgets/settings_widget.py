@@ -67,6 +67,34 @@ class SettingsWidget(QWidget):
         self._app_group.setLayout(app_form)
         layout.addWidget(self._app_group)
 
+        # === Translation group ===
+        self._translation_group = QGroupBox(self._i18n.get("settings.translation_group"))
+        trans_form = QFormLayout()
+
+        # Language options
+        lang_options = ["Korean", "English", "Japanese", "Chinese", "Spanish", "French", "German"]
+
+        self._source_lang_label = QLabel(self._i18n.get("settings.source_lang_label"))
+        self._source_lang_combo = QComboBox()
+        self._source_lang_combo.addItems(lang_options)
+        self._source_lang_combo.setEditable(True)
+        trans_form.addRow(self._source_lang_label, self._source_lang_combo)
+
+        self._target_lang_label = QLabel(self._i18n.get("settings.target_lang_label"))
+        self._target_lang_combo = QComboBox()
+        self._target_lang_combo.addItems(lang_options)
+        self._target_lang_combo.setEditable(True)
+        trans_form.addRow(self._target_lang_label, self._target_lang_combo)
+
+        self._reader_lang_label = QLabel(self._i18n.get("settings.reader_lang_label"))
+        self._reader_lang_combo = QComboBox()
+        self._reader_lang_combo.addItems(lang_options)
+        self._reader_lang_combo.setEditable(True)
+        trans_form.addRow(self._reader_lang_label, self._reader_lang_combo)
+
+        self._translation_group.setLayout(trans_form)
+        layout.addWidget(self._translation_group)
+
         # === LLM group ===
         self._llm_group = QGroupBox(self._i18n.get("settings.llm_group"))
         llm_form = QFormLayout()
@@ -176,6 +204,11 @@ class SettingsWidget(QWidget):
         """Load current config values into widgets."""
         self._lang_combo.setCurrentText(self._config.get("app.locale", "ko_KR"))
         self._theme_combo.setCurrentText(self._config.get("app.theme", "dark"))
+        # Translation settings
+        self._source_lang_combo.setCurrentText(self._config.get("translation.source_lang", "Korean"))
+        self._target_lang_combo.setCurrentText(self._config.get("translation.target_lang", "English"))
+        self._reader_lang_combo.setCurrentText(self._config.get("translation.reader_lang", "Korean"))
+        # LLM settings
         self._logic_combo.setCurrentText(self._config.get("llm.models.logic.name", ""))
         self._persona_combo.setCurrentText(self._config.get("llm.models.persona.name", ""))
         self._host_input.setText(self._config.get("llm.providers.ollama.host", "http://localhost:11434"))
@@ -198,6 +231,11 @@ class SettingsWidget(QWidget):
         changes = {
             "app.locale": self._lang_combo.currentText(),
             "app.log_level": self._log_combo.currentText(),
+            # Translation settings
+            "translation.source_lang": self._source_lang_combo.currentText(),
+            "translation.target_lang": self._target_lang_combo.currentText(),
+            "translation.reader_lang": self._reader_lang_combo.currentText(),
+            # LLM settings
             "llm.models.logic.name": self._get_combo_model_name(self._logic_combo),
             "llm.models.persona.name": self._get_combo_model_name(self._persona_combo),
             "llm.models.persona.temperature": self._persona_temp_spin.value(),
@@ -237,6 +275,11 @@ class SettingsWidget(QWidget):
         self._app_group.setTitle(self._i18n.get("settings.app_group"))
         self._lang_label.setText(self._i18n.get("settings.lang_label"))
         self._theme_label.setText(self._i18n.get("settings.theme_label"))
+        # Translation group
+        self._translation_group.setTitle(self._i18n.get("settings.translation_group"))
+        self._source_lang_label.setText(self._i18n.get("settings.source_lang_label"))
+        self._target_lang_label.setText(self._i18n.get("settings.target_lang_label"))
+        self._reader_lang_label.setText(self._i18n.get("settings.reader_lang_label"))
         self._llm_group.setTitle(self._i18n.get("settings.llm_group"))
         self._logic_label.setText(self._i18n.get("settings.logic_label"))
         self._persona_label.setText(self._i18n.get("settings.persona_label"))

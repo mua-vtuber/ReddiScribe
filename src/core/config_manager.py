@@ -20,6 +20,11 @@ DEFAULT_CONFIG = {
         "version": "1.0.0",
         "log_level": "INFO",
     },
+    "translation": {
+        "source_lang": "Korean",   # Writer: input language
+        "target_lang": "English",  # Writer: output language
+        "reader_lang": "Korean",   # Reader: translate posts to this language
+    },
     "llm": {
         "default_provider": "ollama",
         "providers": {

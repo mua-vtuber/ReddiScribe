@@ -46,9 +46,14 @@ class WriterWidget(QWidget):
         self._refine_worker: Optional[GenerationWorker] = None
         self._refine_messages: list[dict] = []  # chat history for /api/chat
         self._pending_translation: Optional[str] = None  # Apply 대기 중인 수정안
-        self._korean_input_text: str = ""  # store for refine context
+        self._source_input_text: str = ""  # store for refine context
         self._current_context: Optional[WriterContext] = None
         self._current_subreddit: str = ""
+        # Streaming parse state: before "%%%" goes to final, after goes to chat
+        self._refine_started: bool = False  # True after "%%%" is detected
+        self._is_first_refine: bool = True  # first response splits to final+chat
+        self._chat_streamed_content: str = ""  # track what was sent to chat
+        self._token_buffer: str = ""  # buffer for detecting "%%%" across tokens
 
         self._init_ui()
 
@@ -295,7 +300,7 @@ class WriterWidget(QWidget):
         self._draft_output.clear()
         self._final_output.clear()
         self._draft_text = ""
-        self._korean_input_text = korean_text
+        self._source_input_text = korean_text
         self._refine_messages = []
         self._pending_translation = None
         self._apply_btn.setEnabled(False)
@@ -342,22 +347,11 @@ class WriterWidget(QWidget):
             self._on_all_done()
             return
 
-        # Finish draft activity before transitioning to polish
+        # Finish draft activity before transitioning to refine
         self.activity_finished.emit(self._current_activity_name)
 
-        # Request exclusive access for polish
-        if self._coordinator.request_exclusive("writer_polish", self._do_start_polish):
-            # Can proceed immediately
-            self._do_start_polish()
-        else:
-            # Waiting for normal tasks to finish
-            self._current_activity_name = self._i18n.get("status.waiting_exclusive")
-            self.activity_started.emit(self._current_activity_name)
-
-    def _do_start_polish(self):
-        """Actually start polish after exclusive access is granted."""
-        self.activity_finished.emit(self._i18n.get("status.waiting_exclusive"))
-        self._start_polish(self._draft_text)
+        # Skip polish stage - go directly to refine which creates 2nd translation
+        self._start_refine_chat()
 
     def _start_polish(self, english_draft: str):
         """Stage 2: English -> Reddit-ready."""
@@ -369,7 +363,10 @@ class WriterWidget(QWidget):
         self._polish_worker.token_received.connect(self._on_polish_token)
         self._polish_worker.finished_signal.connect(self._on_polish_finished)
         self._polish_worker.error_occurred.connect(self._on_error)
-        self._polish_worker.configure(self._writer.polish, english_draft, context=self._current_context)
+        self._polish_worker.configure(
+            self._writer.polish, english_draft,
+            korean_text=self._source_input_text, context=self._current_context
+        )
         self._start_loading_animation(self._final_output)
         self._current_activity_name = self._i18n.get("status.writer_polish")
         self.activity_started.emit(self._current_activity_name)
@@ -382,9 +379,8 @@ class WriterWidget(QWidget):
         cursor.insertText(token)
 
     def _on_polish_finished(self, full_text: str):
+        # Note: Polish stage is now skipped, this method kept for compatibility
         self._on_all_done()
-        # Auto-start refine chat after Stage 2
-        self._start_refine_chat(full_text)
 
     def _on_all_done(self):
         """Pipeline complete. Restore button state and notify coordinator."""
@@ -423,42 +419,95 @@ class WriterWidget(QWidget):
             self._copy_btn.setText(self._i18n.get("writer.copied"))
             # Reset after 2 seconds would need a QTimer, keep simple for now
 
-    def _start_refine_chat(self, polished_text: str):
-        """Start the refine chat session after Stage 2 completes."""
+    def _start_refine_chat(self):
+        """Start the refine chat session - creates 2nd translation + explanation."""
         # Determine comment language from current locale
         locale = self._i18n.locale
         comment_lang = "한국어" if locale.startswith("ko") else "English"
 
-        # Build initial context with explicit comment language
+        # Reset streaming state
+        self._refine_started = False
+        self._is_first_refine = True
+        self._chat_streamed_content = ""
+        self._token_buffer = ""
+
+        # Show loading in final output first (before chat bubble appears)
+        self._start_loading_animation(self._final_output)
+
+        # Build initial context (refine will create 2nd translation)
         self._refine_messages = self._writer.build_refine_context(
-            self._korean_input_text,
+            self._source_input_text,
             self._draft_text,
-            polished_text,
             comment_lang=comment_lang,
             context=self._current_context,
         )
-        # Enable chat input
-        self._refine_chat.set_input_enabled(True)
-        # Add seed message in user's language
-        seed = ("번역을 검토하고 의견을 공유해 주세요."
+        # Don't enable chat input until translation is done
+        self._refine_chat.set_input_enabled(False)
+        # Add seed message requesting translation + explanation
+        seed = ("2차 번역을 작성하고 왜 그렇게 바꿨는지 설명해 주세요."
                 if locale.startswith("ko")
-                else "Please review the translation and share your thoughts.")
+                else "Create the polished translation and explain your changes.")
         self._refine_messages.append({
             "role": "user",
             "content": seed,
         })
-        # Auto-generate first AI comment
+        # Auto-generate first AI response (translation + explanation)
         self._send_refine_request()
 
     def _on_refine_message(self, text: str):
         """Handle user message from refine chat."""
         self._refine_messages.append({"role": "user", "content": text})
         self._refine_chat.set_input_enabled(False)
+        # Reset streaming state for follow-up
+        self._refine_started = False
+        self._is_first_refine = False  # Follow-up goes entirely to chat
+        self._chat_streamed_content = ""
+        self._token_buffer = ""
         self._send_refine_request()
 
     def _on_refine_token(self, token: str):
-        """Handle streaming token from refine chat."""
-        self._refine_chat.append_to_streaming_message(token)
+        """Handle streaming token - route to final output or chat based on '%%%' detection."""
+        # For follow-up messages, everything goes to chat
+        if not self._is_first_refine:
+            self._refine_chat.append_to_streaming_message(token)
+            self._chat_streamed_content += token
+            return
+
+        # First response: split at "%%%" - before goes to final, after goes to chat
+        if self._refine_started:
+            # Already past "%%%", send to chat
+            self._refine_chat.append_to_streaming_message(token)
+            self._chat_streamed_content += token
+        else:
+            # Buffer tokens to detect "%%%" that might be split across tokens
+            self._token_buffer += token
+
+            if "%%%" in self._token_buffer:
+                idx = self._token_buffer.index("%%%")
+                # Text before "%%%" goes to final output
+                before = self._token_buffer[:idx].rstrip()  # strip trailing newline
+                if before:
+                    self._stop_loading_animation()
+                    cursor = self._final_output.textCursor()
+                    cursor.movePosition(cursor.MoveOperation.End)
+                    cursor.insertText(before)
+                # Now start the chat bubble for explanation
+                self._refine_chat.start_streaming_ai_message()
+                # After "%%%" goes to chat (skip the delimiter itself)
+                after = self._token_buffer[idx + 3:].lstrip()  # strip leading newline
+                if after:
+                    self._refine_chat.append_to_streaming_message(after)
+                    self._chat_streamed_content += after
+                self._token_buffer = ""
+                self._refine_started = True
+            elif len(self._token_buffer) > 5:
+                # Safe to output (keep last 3 chars in buffer for "%%%" detection)
+                self._stop_loading_animation()
+                output = self._token_buffer[:-3]
+                self._token_buffer = self._token_buffer[-3:]
+                cursor = self._final_output.textCursor()
+                cursor.movePosition(cursor.MoveOperation.End)
+                cursor.insertText(output)
 
     def _send_refine_request(self):
         """Send current messages to AI for refine response."""
@@ -486,28 +535,44 @@ class WriterWidget(QWidget):
 
     def _do_start_refine(self):
         """Actually start the refine worker after exclusive access is granted."""
-        self._refine_chat.start_streaming_ai_message()
+        # For first refine, don't show chat bubble until translation is done (%%% detected)
+        if not self._is_first_refine:
+            self._refine_chat.start_streaming_ai_message()
         self._refine_worker.start()
 
     def _on_refine_finished(self, full_text: str):
         """Handle completed refine response."""
         self.activity_finished.emit(self._current_activity_name)
+        self._stop_loading_animation()
+
+        # Flush any remaining buffer
+        if self._token_buffer and self._is_first_refine and not self._refine_started:
+            # No "%%%" was found, remaining buffer is translation
+            cursor = self._final_output.textCursor()
+            cursor.movePosition(cursor.MoveOperation.End)
+            cursor.insertText(self._token_buffer)
+            self._token_buffer = ""
 
         # Append assistant response to history
         self._refine_messages.append({"role": "assistant", "content": full_text})
 
-        # Parse for translation tags
-        translation, comment = parse_refine_response(full_text)
+        # Finish the chat bubble with accumulated content
+        self._refine_chat.finish_streaming_message(self._chat_streamed_content.strip())
 
-        # Replace streamed bubble with comment only (remove [TRANSLATION] tags from display)
-        self._refine_chat.finish_streaming_message(comment)
-
-        if translation:
-            self._refine_chat.add_translation_suggestion(translation)
-            # Note: _pending_translation and _apply_btn are set via
-            # translation_suggested signal -> _on_translation_suggested
+        if self._is_first_refine:
+            # First response: translation already in final output via streaming
+            self._copy_btn.setEnabled(True)
+            self._submit_btn.setEnabled(True)
+        else:
+            # Follow-up: check for translation (text before "%%%")
+            if "%%%" in full_text:
+                translation = full_text[:full_text.index("%%%")].strip()
+                if translation:
+                    self._refine_chat.add_translation_suggestion(translation)
 
         self._refine_chat.set_input_enabled(True)
+        self._translate_btn.setEnabled(True)
+        self._stop_btn.setEnabled(False)
         if self._coordinator.is_exclusive_active():
             self._coordinator.finish_exclusive()
 

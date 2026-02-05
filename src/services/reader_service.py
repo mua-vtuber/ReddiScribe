@@ -104,7 +104,7 @@ class ReaderService:
         Raises:
             OllamaNotRunningError, ModelNotFoundError, LLMTimeoutError
         """
-        target_language = "Korean" if locale == "ko_KR" else "English"
+        target_language = self._config.get("translation.reader_lang", "Korean")
 
         text_to_translate = post.selftext or post.title
         if post.selftext and post.title:
@@ -166,10 +166,10 @@ class ReaderService:
         Yields:
             Generated text tokens (full response is numbered list of translations)
         """
-        if locale != "ko_KR" or not titles:
+        target_language = self._config.get("translation.reader_lang", "Korean")
+        # Skip if target is English (Reddit content is already English)
+        if target_language == "English" or not titles:
             return
-
-        target_language = "Korean"
         numbered = "\n".join(f"{i+1}. {t}" for i, t in enumerate(titles))
         prompt = (
             f"Translate each Reddit post title below to {target_language}.\n"
@@ -202,10 +202,10 @@ class ReaderService:
         Yields:
             Generated text tokens
         """
-        if locale != "ko_KR" or not body.strip():
+        target_language = self._config.get("translation.reader_lang", "Korean")
+        # Skip if target is English (Reddit content is already English)
+        if target_language == "English" or not body.strip():
             return
-
-        target_language = "Korean"
         prompt = (
             f"Translate the following Reddit comment to {target_language}.\n"
             f"\n"

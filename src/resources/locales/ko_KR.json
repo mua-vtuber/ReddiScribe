@@ -79,6 +79,10 @@
   "settings": {
     "advanced_group": "고급",
     "app_group": "애플리케이션",
+    "translation_group": "번역 언어",
+    "source_lang_label": "작성 입력 언어",
+    "target_lang_label": "작성 출력 언어",
+    "reader_lang_label": "읽기 번역 언어",
     "header": "설정",
     "host_label": "Ollama 호스트",
     "interval_label": "요청 간격 (초)",
